@@ -1,7 +1,8 @@
 import ast
 import hashlib
 from json import dumps, loads
-import leveldb
+#import leveldb
+import plyvel
 import os
 from Queue import Queue
 import random
@@ -36,13 +37,13 @@ class BlockchainProcessor(Processor):
         self.mempool_lock = threading.Lock()
 
         self.address_queue = Queue()
-        self.dbpath = config.get('leveldb', 'path')
+        self.dbpath = config.get('leveldb', 'path_plyvel')
         self.pruning_limit = config.getint('leveldb', 'pruning_limit')
         self.db_version = 1 # increase this when database needs to be updated
 
         self.dblock = threading.Lock()
         try:
-            self.db = leveldb.LevelDB(self.dbpath, paranoid_checks=True)
+            self.db = plyvel.DB(self.dbpath,create_if_missing=True)
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
@@ -68,7 +69,7 @@ class BlockchainProcessor(Processor):
         self.sent_header = None
 
         try:
-            hist = self.deserialize(self.db.Get('height'))
+            hist = self.deserialize(self.db.get('height'))
             self.last_hash, self.height, db_version = hist[0]
             print_log("Database version", self.db_version)
             print_log("Blockchain height", self.height)
@@ -269,7 +270,7 @@ class BlockchainProcessor(Processor):
 
         with self.dblock:
             try:
-                hist = self.deserialize(self.db.Get(addr))
+                hist = self.deserialize(self.db.get(addr))
                 is_known = True
             except:
                 hist = []
@@ -466,12 +467,12 @@ class BlockchainProcessor(Processor):
         return tx_hashes, txdict
 
     def get_undo_info(self, height):
-        s = self.db.Get("undo%d" % (height % 100))
+        s = self.db.get("undo%d" % (height % 100))
         return eval(s)
 
     def write_undo_info(self, batch, height, undo_info):
         if self.is_test or height > self.bitcoind_height - 100:
-            batch.Put("undo%d" % (height % 100), repr(undo_info))
+            batch.put("undo%d" % (height % 100), repr(undo_info))
 
     def import_block(self, block, block_hash, block_height, sync, revert=False):
 
@@ -505,10 +506,10 @@ class BlockchainProcessor(Processor):
             block_inputs.sort()
             for txi in block_inputs:
                 try:
-                    addr = self.db.Get(txi)
-                except KeyError:
-                    # the input could come from the same block
-                    continue
+                    addr = self.db.get(txi)
+                    if addr is None:
+                        # the input could come from the same block
+                        continue
                 except:
                     traceback.print_exc(file=sys.stdout)
                     self.shared.stop()
@@ -541,9 +542,8 @@ class BlockchainProcessor(Processor):
         addr_to_read.sort()
         for addr in addr_to_read:
             try:
-                self.batch_list[addr] = self.db.Get(addr)
-            except KeyError:
-                self.batch_list[addr] = ''
+                h = self.db.get(addr)
+                self.batch_list[addr] = '' if h is None else h
             except:
                 traceback.print_exc(file=sys.stdout)
                 self.shared.stop()
@@ -613,9 +613,10 @@ class BlockchainProcessor(Processor):
         max_addr = ''
         t2 = time.time()
 
-        batch = leveldb.WriteBatch()
+        #batch = leveldb.WriteBatch()
+        batch = self.db.write_batch()
         for addr, serialized_hist in self.batch_list.items():
-            batch.Put(addr, serialized_hist)
+            batch.put(addr, serialized_hist)
             l = len(serialized_hist)/80
             if l > max_len:
                 max_len = l
@@ -624,26 +625,27 @@ class BlockchainProcessor(Processor):
         if not revert:
             # add new created outputs
             for txio, addr in self.batch_txio.items():
-                batch.Put(txio, addr)
+                batch.put(txio, addr)
             # delete spent inputs
             for txi in block_inputs:
-                batch.Delete(txi)
+                batch.delete(txi)
             # add undo info
             self.write_undo_info(batch, block_height, undo_info)
         else:
             # restore spent inputs
             for txio, addr in self.batch_txio.items():
                 # print "restoring spent input", repr(txio)
-                batch.Put(txio, addr)
+                batch.put(txio, addr)
             # delete spent outputs
             for txo in block_outputs:
-                batch.Delete(txo)
+                batch.delete(txo)
 
         # add the max
-        batch.Put('height', self.serialize([(block_hash, block_height, self.db_version)]))
+        batch.put('height', self.serialize([(block_hash, block_height, self.db_version)]))
 
         # actual write
-        self.db.Write(batch, sync=sync)
+        #self.db.Write(batch, sync=sync)
+        batch.write()#, sync=sync)
 
         t3 = time.time()
         if t3 - t0 > 10 and not sync:
@@ -663,7 +665,6 @@ class BlockchainProcessor(Processor):
             self.queue.put(request)
 
     def process(self, request, cache_only=False):
-        #print "abe process", request
 
         message_id = request['id']
         method = request['method']
