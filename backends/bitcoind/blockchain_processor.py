@@ -271,8 +271,12 @@ class BlockchainProcessor(Processor):
         with self.dblock:
             try:
                 hist = self.deserialize(self.db.get(addr))
-                is_known = True
             except:
+                self.shared.stop()
+                raise
+            if hist:
+                is_known = True
+            else:
                 hist = []
                 is_known = False
 
