@@ -270,7 +270,7 @@ class BlockchainProcessor(Processor):
 
         with self.dblock:
             try:
-                hist = self.deserialize(self.db.get(addr))
+                hist = self.deserialize(self.db.get(str((addr))))
             except:
                 self.shared.stop()
                 raise
