@@ -41,9 +41,10 @@ class BlockchainProcessor(Processor):
         self.pruning_limit = config.getint('leveldb', 'pruning_limit')
         self.db_version = 1 # increase this when database needs to be updated
 
+        #plyvel.repair_db(self.dbpath)
         self.dblock = threading.Lock()
         try:
-            self.db = plyvel.DB(self.dbpath,create_if_missing=True)
+            self.db = plyvel.DB(self.dbpath,create_if_missing=True, paranoid_checks=True)
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
@@ -74,7 +75,7 @@ class BlockchainProcessor(Processor):
             print_log("Database version", self.db_version)
             print_log("Blockchain height", self.height)
         except:
-            traceback.print_exc(file=sys.stdout)
+            #traceback.print_exc(file=sys.stdout)
             print_log('initializing database')
             self.height = 0
             self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
@@ -549,6 +550,7 @@ class BlockchainProcessor(Processor):
                 h = self.db.get(addr)
                 self.batch_list[addr] = '' if h is None else h
             except:
+                print "db get error", addr
                 traceback.print_exc(file=sys.stdout)
                 self.shared.stop()
                 raise
@@ -829,6 +831,10 @@ class BlockchainProcessor(Processor):
 
         self.header = self.block2header(self.bitcoind('getblock', [self.last_hash]))
 
+        if self.shared.stopped(): 
+            print_log( "closing database" )
+            self.db.close()
+
     def memorypool_update(self):
         mempool_hashes = self.bitcoind('getrawmempool')
 
@@ -898,6 +904,8 @@ class BlockchainProcessor(Processor):
     def main_iteration(self):
         if self.shared.stopped():
             print_log("blockchain processor terminating")
+            print_log("closing database")
+            self.db.close()
             return
 
         with self.dblock:
