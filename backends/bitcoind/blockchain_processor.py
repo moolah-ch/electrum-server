@@ -44,7 +44,7 @@ class BlockchainProcessor(Processor):
         #plyvel.repair_db(self.dbpath)
         self.dblock = threading.Lock()
         try:
-            self.db = plyvel.DB(self.dbpath,create_if_missing=True, paranoid_checks=True)
+            self.db = plyvel.DB(self.dbpath, create_if_missing=True, paranoid_checks=True, compression=None)
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
