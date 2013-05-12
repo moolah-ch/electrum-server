@@ -16,11 +16,13 @@ from backends.bitcoind import deserialize
 from processor import Processor, print_log
 from utils import *
 
+from storage import Storage
 
 class BlockchainProcessor(Processor):
 
     def __init__(self, config, shared):
         Processor.__init__(self)
+
 
         self.shared = shared
         self.config = config
@@ -30,6 +32,11 @@ class BlockchainProcessor(Processor):
         self.chunk_cache = {}
         self.cache_lock = threading.Lock()
         self.headers_data = ''
+        self.headers_path = config.get('leveldb', 'path_plyvel')
+        try:
+            self.test_reorgs = config.get('leveldb', 'test_reorgs')   # simulate random blockchain reorgs
+        except:
+            self.test_reorgs = False
 
         self.mempool_addresses = {}
         self.mempool_hist = {}
@@ -37,17 +44,9 @@ class BlockchainProcessor(Processor):
         self.mempool_lock = threading.Lock()
 
         self.address_queue = Queue()
-        self.dbpath = config.get('leveldb', 'path_plyvel')
-        self.pruning_limit = config.getint('leveldb', 'pruning_limit')
-        self.db_version = 1 # increase this when database needs to be updated
+        self.storage = Storage(config, shared, self.test_reorgs)
 
-        #plyvel.repair_db(self.dbpath)
         self.dblock = threading.Lock()
-        try:
-            self.db = plyvel.DB(self.dbpath, create_if_missing=True, paranoid_checks=True, compression=None)
-        except:
-            traceback.print_exc(file=sys.stdout)
-            self.shared.stop()
 
         self.bitcoind_url = 'http://%s:%s@%s:%s/' % (
             config.get('bitcoind', 'user'),
@@ -64,31 +63,13 @@ class BlockchainProcessor(Processor):
                 time.sleep(5)
                 continue
 
-        self.height = 0
-        self.is_test = False
+        #self.height = 0
         self.sent_height = 0
         self.sent_header = None
 
-        try:
-            hist = self.deserialize(self.db.get('height'))
-            self.last_hash, self.height, db_version = hist[0]
-            print_log("Database version", self.db_version)
-            print_log("Blockchain height", self.height)
-        except:
-            #traceback.print_exc(file=sys.stdout)
-            print_log('initializing database')
-            self.height = 0
-            self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
-            db_version = self.db_version
-
-        # check version
-        if self.db_version != db_version:
-            print_log("Your database '%s' is deprecated. Please create a new database"%self.dbpath)
-            self.shared.stop()
-            return
 
         # catch_up headers
-        self.init_headers(self.height)
+        self.init_headers(self.storage.height)
 
         threading.Timer(0, lambda: self.catch_up(sync=False)).start()
         while not shared.stopped() and not self.up_to_date:
@@ -118,33 +99,6 @@ class BlockchainProcessor(Processor):
             raise BaseException(r['error'])
         return r.get('result')
 
-    def serialize(self, h):
-        s = ''
-        for txid, txpos, height in h:
-            s += self.serialize_item(txid, txpos, height)
-        return s
-
-    def serialize_item(self, txid, txpos, height, spent=chr(0)):
-        s = (txid + int_to_hex(txpos, 4) + int_to_hex(height, 3)).decode('hex') + spent 
-        return s
-
-    def deserialize_item(self,s):
-        txid = s[0:32].encode('hex')
-        txpos = int(rev_hex(s[32:36].encode('hex')), 16)
-        height = int(rev_hex(s[36:39].encode('hex')), 16)
-        spent = s[39:40]
-        return (txid, txpos, height, spent)
-
-    def deserialize(self, s):
-        h = []
-        while s:
-            txid, txpos, height, spent = self.deserialize_item(s[0:40])
-            h.append((txid, txpos, height))
-            if spent == chr(1):
-                txid, txpos, height, spent = self.deserialize_item(s[40:80])
-                h.append((txid, txpos, height))
-            s = s[80:]
-        return h
 
     def block2header(self, b):
         return {
@@ -164,7 +118,7 @@ class BlockchainProcessor(Processor):
 
     def init_headers(self, db_height):
         self.chunk_cache = {}
-        self.headers_filename = os.path.join(self.dbpath, 'blockchain_headers')
+        self.headers_filename = os.path.join(self.headers_path, 'blockchain_headers')
 
         if os.path.exists(self.headers_filename):
             height = os.path.getsize(self.headers_filename)/80 - 1   # the current height
@@ -271,7 +225,8 @@ class BlockchainProcessor(Processor):
 
         with self.dblock:
             try:
-                hist = self.deserialize(self.db.get(str((addr))))
+                h = self.storage.get_history(str((addr)))
+                hist = self.storage.deserialize(h)
             except:
                 self.shared.stop()
                 raise
@@ -346,115 +301,6 @@ class BlockchainProcessor(Processor):
         return {"block_height": height, "merkle": s, "pos": tx_pos}
 
 
-    def add_to_history(self, addr, tx_hash, tx_pos, tx_height):
-        # keep it sorted
-        s = self.serialize_item(tx_hash, tx_pos, tx_height) + 40*chr(0)
-        assert len(s) == 80
-
-        serialized_hist = self.batch_list[addr]
-
-        l = len(serialized_hist)/80
-        for i in range(l-1, -1, -1):
-            item = serialized_hist[80*i:80*(i+1)]
-            item_height = int(rev_hex(item[36:39].encode('hex')), 16)
-            if item_height <= tx_height:
-                serialized_hist = serialized_hist[0:80*(i+1)] + s + serialized_hist[80*(i+1):]
-                break
-        else:
-            serialized_hist = s + serialized_hist
-
-        self.batch_list[addr] = serialized_hist
-
-        # backlink
-        txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.batch_txio[txo] = addr
-
-
-
-    def revert_add_to_history(self, addr, tx_hash, tx_pos, tx_height):
-
-        serialized_hist = self.batch_list[addr]
-        s = self.serialize_item(tx_hash, tx_pos, tx_height) + 40*chr(0)
-        if serialized_hist.find(s) == -1: raise
-        serialized_hist = serialized_hist.replace(s, '')
-        self.batch_list[addr] = serialized_hist
-
-
-
-    def prune_history(self, addr, undo):
-        # remove items that have bit set to one
-        if undo.get(addr) is None: undo[addr] = []
-
-        serialized_hist = self.batch_list[addr]
-        l = len(serialized_hist)/80
-        for i in range(l):
-            if len(serialized_hist)/80 < self.pruning_limit: break
-            item = serialized_hist[80*i:80*(i+1)] 
-            if item[39:40] == chr(1):
-                assert item[79:80] == chr(2)
-                serialized_hist = serialized_hist[0:80*i] + serialized_hist[80*(i+1):]
-                undo[addr].append(item)  # items are ordered
-        self.batch_list[addr] = serialized_hist
-
-
-    def revert_prune_history(self, addr, undo):
-        # restore removed items
-        serialized_hist = self.batch_list[addr]
-
-        if undo.get(addr) is not None: 
-            itemlist = undo.pop(addr)
-        else:
-            return 
-
-        if not itemlist: return
-
-        l = len(serialized_hist)/80
-        tx_item = ''
-        for i in range(l-1, -1, -1):
-            if tx_item == '':
-                if not itemlist: 
-                    break
-                else:
-                    tx_item = itemlist.pop(-1) # get the last element
-                    tx_height = int(rev_hex(tx_item[36:39].encode('hex')), 16)
-            
-            item = serialized_hist[80*i:80*(i+1)]
-            item_height = int(rev_hex(item[36:39].encode('hex')), 16)
-
-            if item_height < tx_height:
-                serialized_hist = serialized_hist[0:80*(i+1)] + tx_item + serialized_hist[80*(i+1):]
-                tx_item = ''
-
-        else:
-            serialized_hist = ''.join(itemlist) + tx_item + serialized_hist
-
-        self.batch_list[addr] = serialized_hist
-
-
-    def set_spent_bit(self, addr, txi, is_spent, txid=None, index=None, height=None):
-        serialized_hist = self.batch_list[addr]
-        l = len(serialized_hist)/80
-        for i in range(l):
-            item = serialized_hist[80*i:80*(i+1)]
-            if item[0:36] == txi:
-                if is_spent:
-                    new_item = item[0:39] + chr(1) + self.serialize_item(txid, index, height, chr(2))
-                else:
-                    new_item = item[0:39] + chr(0) + chr(0)*40 
-                serialized_hist = serialized_hist[0:80*i] + new_item + serialized_hist[80*(i+1):]
-                break
-        else:
-            self.shared.stop()
-            hist = self.deserialize(serialized_hist)
-            raise BaseException("prevout not found", addr, hist, txi.encode('hex'))
-
-        self.batch_list[addr] = serialized_hist
-
-
-    def unset_spent_bit(self, addr, txi):
-        self.set_spent_bit(addr, txi, False)
-        self.batch_txio[txi] = addr
-
 
     def deserialize_block(self, block):
         txlist = block.get('tx')
@@ -471,32 +317,22 @@ class BlockchainProcessor(Processor):
             is_coinbase = False
         return tx_hashes, txdict
 
-    def get_undo_info(self, height):
-        s = self.db.get("undo%d" % (height % 100))
-        return eval(s)
-
-    def write_undo_info(self, batch, height, undo_info):
-        if self.is_test or height > self.bitcoind_height - 100:
-            batch.put("undo%d" % (height % 100), repr(undo_info))
 
     def import_block(self, block, block_hash, block_height, sync, revert=False):
 
-        self.batch_list = {}  # address -> history
-        self.batch_txio = {}  # transaction i/o -> address
 
         block_inputs = []
         block_outputs = []
         addr_to_read = []
 
-        # deserialize transactions
-        t0 = time.time()
-        tx_hashes, txdict = self.deserialize_block(block)
+        self.storage.init_batch()
 
-        t00 = time.time()
+        # deserialize transactions
+        tx_hashes, txdict = self.deserialize_block(block)
 
         # undo info
         if revert:
-            undo_info = self.get_undo_info(block_height)
+            undo_info = self.storage.get_undo_info(block_height)
         else:
             undo_info = {}
 
@@ -510,17 +346,11 @@ class BlockchainProcessor(Processor):
 
             block_inputs.sort()
             for txi in block_inputs:
-                try:
-                    addr = self.db.get(txi)
-                    if addr is None:
-                        # the input could come from the same block
-                        continue
-                except:
-                    traceback.print_exc(file=sys.stdout)
-                    self.shared.stop()
-                    raise
+                addr = self.storage.get_address(txi)
+                if addr is None:
+                    # the input may come from the same block
+                    continue
 
-                self.batch_txio[txi] = addr
                 addr_to_read.append(addr)
 
         else:
@@ -532,36 +362,19 @@ class BlockchainProcessor(Processor):
 
                 undo = undo_info.get(txid)
                 for i, x in enumerate(tx.get('inputs')):
-                    addr = undo['prev_addr'][i]
-                    addr_to_read.append(addr)
+                    addr_to_read.append(undo['prev_addr'][i])
 
-
-
-
-
-        # read histories of addresses
         for txid, tx in txdict.items():
             for x in tx.get('outputs'):
                 addr_to_read.append(x.get('address'))
 
-        addr_to_read.sort()
-        for addr in addr_to_read:
-            try:
-                h = self.db.get(addr)
-                self.batch_list[addr] = '' if h is None else h
-            except:
-                print "db get error", addr
-                traceback.print_exc(file=sys.stdout)
-                self.shared.stop()
-                raise
 
+        # read histories of addresses
+        self.storage.read_addresses(addr_to_read)
 
         # process
-        t1 = time.time()
-
         if revert:
             tx_hashes = tx_hashes[::-1]
-
 
         for txid in tx_hashes:  # must be ordered
             tx = txdict[txid]
@@ -572,14 +385,12 @@ class BlockchainProcessor(Processor):
                 prev_addr = []
                 for i, x in enumerate(tx.get('inputs')):
                     txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                    addr = self.batch_txio[txi]
+                    addr = self.storage.get_address(txi)
 
-                    # add redeem item to the history.
-                    # add it right next to the input txi? this will break history sorting, but it's ok if I neglect tx inputs during search
-                    self.set_spent_bit(addr, txi, True, txid, i, block_height)
+                    # Add redeem item to the history.
+                    self.storage.set_spent(addr, txi, txid, i, block_height, undo)
 
-                    # when I prune, prune a pair
-                    self.prune_history(addr, undo)
+                    ##self.storage.prune_history(addr, undo)
                     prev_addr.append(addr)
 
                 undo['prev_addr'] = prev_addr 
@@ -587,8 +398,8 @@ class BlockchainProcessor(Processor):
                 # here I add only the outputs to history; maybe I want to add inputs too (that's in the other loop)
                 for x in tx.get('outputs'):
                     addr = x.get('address')
-                    self.add_to_history(addr, txid, x.get('index'), block_height)
-                    self.prune_history(addr, undo)  # prune here because we increased the length of the history
+                    self.storage.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
+                    ##self.storage.prune_history(addr, undo)  # prune here because we increased the length of the history
 
                 undo_info[txid] = undo
 
@@ -598,72 +409,49 @@ class BlockchainProcessor(Processor):
 
                 for x in tx.get('outputs'):
                     addr = x.get('address')
-                    self.revert_prune_history(addr, undo)
-                    self.revert_add_to_history(addr, txid, x.get('index'), block_height)
+                    ## self.storage.revert_prune_history(addr, undo)
+                    self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
 
                 prev_addr = undo.pop('prev_addr')
                 for i, x in enumerate(tx.get('inputs')):
                     addr = prev_addr[i]
-                    self.revert_prune_history(addr, undo)
-                    txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                    self.unset_spent_bit(addr, txi)
+                    ## self.storage.revert_prune_history(addr, undo)
+                    #txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
+                    self.storage.revert_set_spent(addr, undo)
 
                 assert undo == {}
 
-        if revert: 
+        if revert:
             assert undo_info == {}
 
-
-        # write
-        max_len = 0
-        max_addr = ''
-        t2 = time.time()
-
-        #batch = leveldb.WriteBatch()
-        batch = self.db.write_batch()
-        for addr, serialized_hist in self.batch_list.items():
-            batch.put(addr, serialized_hist)
-            l = len(serialized_hist)/80
-            if l > max_len:
-                max_len = l
-                max_addr = addr
-
+            
+        # prepare storage for write 
         if not revert:
-            # add new created outputs
-            for txio, addr in self.batch_txio.items():
-                batch.put(txio, addr)
+
             # delete spent inputs
             for txi in block_inputs:
-                batch.delete(txi)
+                self.storage.delete(txi)
+
             # add undo info
-            self.write_undo_info(batch, block_height, undo_info)
+            self.storage.write_undo_info(block_height, self.bitcoind_height, undo_info)
         else:
-            # restore spent inputs
-            for txio, addr in self.batch_txio.items():
-                # print "restoring spent input", repr(txio)
-                batch.put(txio, addr)
+
             # delete spent outputs
             for txo in block_outputs:
-                batch.delete(txo)
+                self.storage.delete(txo)
 
         # add the max
-        batch.put('height', self.serialize([(block_hash, block_height, self.db_version)]))
+        self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
         # actual write
-        #self.db.Write(batch, sync=sync)
-        batch.write()#, sync=sync)
+        invalidated_addresses = self.storage.write_addresses()
 
-        t3 = time.time()
-        if t3 - t0 > 10 and not sync:
-            print_log("block", block_height,
-                      "parse:%0.2f " % (t00 - t0),
-                      "read:%0.2f " % (t1 - t00),
-                      "proc:%.2f " % (t2-t1),
-                      "write:%.2f " % (t3-t2),
-                      "max:", max_len, max_addr)
-
-        for addr in self.batch_list.keys():
+        for addr in invalidated_addresses:
             self.invalidate_cache(addr)
+
+
+        #self.storage.print_all()
+
 
     def add_request(self, request):
         # see if we can get if from cache. if not, add to queue
@@ -679,7 +467,7 @@ class BlockchainProcessor(Processor):
         error = None
 
         if method == 'blockchain.numblocks.subscribe':
-            result = self.height
+            result = self.storage.height
 
         elif method == 'blockchain.headers.subscribe':
             result = self.header
@@ -791,49 +579,50 @@ class BlockchainProcessor(Processor):
             info = self.bitcoind('getinfo')
             self.bitcoind_height = info.get('blocks')
             bitcoind_block_hash = self.bitcoind('getblockhash', [self.bitcoind_height])
-            if self.last_hash == bitcoind_block_hash:
+            if self.storage.last_hash == bitcoind_block_hash:
                 self.up_to_date = True
                 break
 
             # not done..
             self.up_to_date = False
-            next_block_hash = self.bitcoind('getblockhash', [self.height + 1])
+            next_block_hash = self.bitcoind('getblockhash', [self.storage.height + 1])
             next_block = self.bitcoind('getblock', [next_block_hash, 1])
 
             # fixme: this is unsafe, if we revert when the undo info is not yet written
-            revert = (random.randint(1, 100) == 1) if self.is_test else False
+            revert = (random.randint(1, 100) == 1) if self.test_reorgs else False
 
-            if (next_block.get('previousblockhash') == self.last_hash) and not revert:
+            if (next_block.get('previousblockhash') == self.storage.last_hash) and not revert:
 
-                self.import_block(next_block, next_block_hash, self.height+1, sync)
-                self.height = self.height + 1
+                self.import_block(next_block, next_block_hash, self.storage.height+1, sync)
+                self.storage.height = self.storage.height + 1
                 self.write_header(self.block2header(next_block), sync)
-                self.last_hash = next_block_hash
+                self.storage.last_hash = next_block_hash
 
-                if self.height % 100 == 0 and not sync:
+                if self.storage.height % 100 == 0 and not sync:
                     t2 = time.time()
-                    print_log("catch_up: block %d (%.3fs)" % (self.height, t2 - t1))
+                    print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
                     t1 = t2
 
             else:
                 # revert current block
-                block = self.bitcoind('getblock', [self.last_hash, 1])
-                print_log("blockchain reorg", self.height, block.get('previousblockhash'), self.last_hash)
-                self.import_block(block, self.last_hash, self.height, sync, revert=True)
+                block = self.bitcoind('getblock', [self.storage.last_hash, 1])
+                print_log("blockchain reorg", self.storage.height, block.get('previousblockhash'), self.storage.last_hash)
+                self.import_block(block, self.storage.last_hash, self.storage.height, sync, revert=True)
                 self.pop_header()
                 self.flush_headers()
 
-                self.height -= 1
+                self.storage.height -= 1
 
                 # read previous header from disk
-                self.header = self.read_header(self.height)
-                self.last_hash = self.hash_header(self.header)
+                self.header = self.read_header(self.storage.height)
+                self.storage.last_hash = self.hash_header(self.header)
 
-        self.header = self.block2header(self.bitcoind('getblock', [self.last_hash]))
+        self.header = self.block2header(self.bitcoind('getblock', [self.storage.last_hash]))
 
         if self.shared.stopped(): 
             print_log( "closing database" )
-            self.db.close()
+            #self.storage.print_all()
+            self.storage.close()
 
     def memorypool_update(self):
         mempool_hashes = self.bitcoind('getrawmempool')
@@ -905,7 +694,7 @@ class BlockchainProcessor(Processor):
         if self.shared.stopped():
             print_log("blockchain processor terminating")
             print_log("closing database")
-            self.db.close()
+            self.storage.close()
             return
 
         with self.dblock:
@@ -915,16 +704,16 @@ class BlockchainProcessor(Processor):
 
         self.memorypool_update()
 
-        if self.sent_height != self.height:
-            self.sent_height = self.height
+        if self.sent_height != self.storage.height:
+            self.sent_height = self.storage.height
             self.push_response({
                 'id': None,
                 'method': 'blockchain.numblocks.subscribe',
-                'params': [self.height],
+                'params': [self.storage.height],
             })
 
         if self.sent_header != self.header:
-            print_log("blockchain: %d (%.3fs)" % (self.height, t2 - t1))
+            print_log("blockchain: %d (%.3fs)" % (self.storage.height, t2 - t1))
             self.sent_header = self.header
             self.push_response({
                 'id': None,
