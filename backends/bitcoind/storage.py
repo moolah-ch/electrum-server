@@ -147,9 +147,8 @@ class Storage(object):
         self.init_batch()
 
 
-    def write_addresses(self):
+    def add_addresses(self):
         path_list = []
-
         # add new addresses to the tree
         for addr, serialized_hist in self.batch_addr.items():
             if serialized_hist:
@@ -159,18 +158,14 @@ class Storage(object):
                 self.delete_address(addr)
 
         new_addresses = map(self.key_to_address, self.batch_addr.keys())
+        return new_addresses, path_list
 
-        self.write_batch()
 
+    def update_hashes(self, path_list):
         # update node hashes
         for path in path_list:
             for x in path[::-1]:
                 self.update_node_hash(x)
-
-        self.write_batch()
-
-        # return list of addresses, in order to invalidate cache
-        return new_addresses 
 
 
     def common_prefix(self, word1, word2):

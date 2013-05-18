@@ -24,6 +24,7 @@ class BlockchainProcessor(Processor):
         Processor.__init__(self)
 
 
+        self.mtimes = {} # monitoring
         self.shared = shared
         self.config = config
         self.up_to_date = False
@@ -317,9 +318,23 @@ class BlockchainProcessor(Processor):
             is_coinbase = False
         return tx_hashes, txdict
 
+    def mtime(self, name):
+        now = time.clock()
+        if name != '':
+            delta = now - self.now
+            t = self.mtimes.get(name, 0)
+            self.mtimes[name] = t + delta
+        self.now = now
+
+    def print_mtime(self):
+        s = ''
+        for k, v in self.mtimes.items():
+            s += k+':'+"%.2f"%v+' '
+        print_log(s)
+
 
     def import_block(self, block, block_hash, block_height, sync, revert=False):
-
+        self.mtime('')
 
         block_inputs = []
         block_outputs = []
@@ -371,6 +386,7 @@ class BlockchainProcessor(Processor):
 
         # read histories of addresses
         self.storage.read_addresses(addr_to_read)
+        self.mtime('read')
 
         # process
         if revert:
@@ -424,6 +440,7 @@ class BlockchainProcessor(Processor):
         if revert:
             assert undo_info == {}
 
+        self.mtime('process')
             
         # prepare storage for write 
         if not revert:
@@ -443,14 +460,24 @@ class BlockchainProcessor(Processor):
         # add the max
         self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
+        self.mtime('prepare')
+
         # actual write
-        invalidated_addresses = self.storage.write_addresses()
+        invalidated_addresses, path_list = self.storage.add_addresses()
+        self.mtime('addr')
+
+        self.storage.write_batch()
+        self.mtime('write1')
+
+        self.storage.update_hashes(path_list)
+        self.mtime('hashes')
+
+        self.storage.write_batch()
+        self.mtime('write2')
 
         for addr in invalidated_addresses:
             self.invalidate_cache(addr)
 
-
-        #self.storage.print_all()
 
 
     def add_request(self, request):
@@ -601,6 +628,7 @@ class BlockchainProcessor(Processor):
                 if self.storage.height % 100 == 0 and not sync:
                     t2 = time.time()
                     print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
+                    self.print_mtime()
                     t1 = t2
 
             else:
