@@ -338,7 +338,7 @@ class BlockchainProcessor(Processor):
 
         block_inputs = []
         block_outputs = []
-        addr_to_read = []
+        touched_addr = []
 
         # deserialize transactions
         tx_hashes, txdict = self.deserialize_block(block)
@@ -367,6 +367,7 @@ class BlockchainProcessor(Processor):
 
                     # Add redeem item to the history.
                     self.storage.set_spent(addr, txi, txid, i, block_height, undo)
+                    touched_addr.append(addr)
 
                     ##self.storage.prune_history(addr, undo)
                     prev_addr.append(addr)
@@ -377,6 +378,7 @@ class BlockchainProcessor(Processor):
                 for x in tx.get('outputs'):
                     addr = x.get('address')
                     self.storage.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
+                    touched_addr.append(addr)
                     ##self.storage.prune_history(addr, undo)  # prune here because we increased the length of the history
 
                 undo_info[txid] = undo
@@ -389,6 +391,7 @@ class BlockchainProcessor(Processor):
                     addr = x.get('address')
                     ## self.storage.revert_prune_history(addr, undo)
                     self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
+                    touched_addr.append(addr)
 
                 prev_addr = undo.pop('prev_addr')
                 for i, x in enumerate(tx.get('inputs')):
@@ -396,6 +399,7 @@ class BlockchainProcessor(Processor):
                     ## self.storage.revert_prune_history(addr, undo)
                     #txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
                     self.storage.revert_set_spent(addr, undo)
+                    touched_addr.append(addr)
 
                 assert undo == {}
 
@@ -422,9 +426,8 @@ class BlockchainProcessor(Processor):
         # add the max
         self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
-
-        #for addr in invalidated_addresses:
-        #    self.invalidate_cache(addr)
+        for addr in touched_add:
+            self.invalidate_cache(addr)
 
 
 
@@ -576,7 +579,7 @@ class BlockchainProcessor(Processor):
                 if self.storage.height % 100 == 0 and not sync:
                     t2 = time.time()
                     print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
-                    self.print_mtime()
+                    # self.print_mtime()
                     t1 = t2
 
             else:
