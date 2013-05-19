@@ -340,8 +340,6 @@ class BlockchainProcessor(Processor):
         block_outputs = []
         addr_to_read = []
 
-        self.storage.init_batch()
-
         # deserialize transactions
         tx_hashes, txdict = self.deserialize_block(block)
 
@@ -351,42 +349,6 @@ class BlockchainProcessor(Processor):
         else:
             undo_info = {}
 
-
-        if not revert:
-            # read addresses of tx inputs
-            for tx in txdict.values():
-                for x in tx.get('inputs'):
-                    txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                    block_inputs.append(txi)
-
-            block_inputs.sort()
-            for txi in block_inputs:
-                addr = self.storage.get_address(txi)
-                if addr is None:
-                    # the input may come from the same block
-                    continue
-
-                addr_to_read.append(addr)
-
-        else:
-            for txid, tx in txdict.items():
-                for x in tx.get('outputs'):
-                    txo = (txid + int_to_hex(x.get('index'), 4)).decode('hex')
-                    block_outputs.append(txo)
-                    addr_to_read.append( x.get('address') )
-
-                undo = undo_info.get(txid)
-                for i, x in enumerate(tx.get('inputs')):
-                    addr_to_read.append(undo['prev_addr'][i])
-
-        for txid, tx in txdict.items():
-            for x in tx.get('outputs'):
-                addr_to_read.append(x.get('address'))
-
-
-        # read histories of addresses
-        self.storage.read_addresses(addr_to_read)
-        self.mtime('read')
 
         # process
         if revert:
@@ -460,23 +422,9 @@ class BlockchainProcessor(Processor):
         # add the max
         self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
-        self.mtime('prepare')
 
-        # actual write
-        invalidated_addresses, path_list = self.storage.add_addresses()
-        self.mtime('addr')
-
-        self.storage.write_batch()
-        self.mtime('write1')
-
-        self.storage.update_hashes(path_list)
-        self.mtime('hashes')
-
-        self.storage.write_batch()
-        self.mtime('write2')
-
-        for addr in invalidated_addresses:
-            self.invalidate_cache(addr)
+        #for addr in invalidated_addresses:
+        #    self.invalidate_cache(addr)
 
 
 

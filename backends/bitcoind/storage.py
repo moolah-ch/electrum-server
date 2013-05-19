@@ -38,10 +38,8 @@ class Storage(object):
             self.height = 0
             self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
             db_version = self.db_version
-
-            self.init_batch()
-            self.put_node('a', '', 0, None)
-            self.write_batch()
+            # write root
+            self.put_node('a', '',  '', 0, None)
 
         # check version
         if self.db_version != db_version:
@@ -76,7 +74,7 @@ class Storage(object):
         if x is None: 
             return ''
         try:
-            _hash, v, h = x
+            l, _hash, v, h = x
             return h
         except:
             traceback.print_exc(file=sys.stdout)
@@ -85,30 +83,26 @@ class Storage(object):
 
 
     def get_node(self, key):
-        s = self.batch_keys.get(key)
-        if s is None:
-            s = self.db_get(key)
-            if s is None: 
-                return 
+
+        s = self.db_get(key)
+        if s is None: 
+            return 
         return self.parse_node(s)
 
 
     def get_address(self, txi):
         txi = 'b' + txi
-        addr = self.batch_keys.get(txi)
-        if not addr: 
-            addr = self.db_get(txi)
-            self.batch_keys[txi] = addr
 
+        addr = self.db_get(txi)
         return self.key_to_address(addr) if addr else None
 
 
 
     def put(self, key, value):
-        self.batch_keys[key] = value
+        self.db.put(key, value)
 
     def delete(self, key):
-        self.delete_list.append(key)
+        self.db.delete(key)
 
 
     def get_undo_info(self, height):
@@ -119,53 +113,11 @@ class Storage(object):
 
     def write_undo_info(self, height, bitcoind_height, undo_info):
         if height > bitcoind_height - 100 or self.test_reorgs:
-            self.batch_keys["undo%d" % (height % 100)] =  repr(undo_info)
-
-
-    def read_addresses(self, addr_list):
-        #addr_list = map( self.address_to_key, addr_list)
-        #addr_list.sort()
-        for addr in addr_list:
-            k = self.address_to_key(addr)
-            self.batch_addr[k] = self.get_history(addr)
+            self.put("undo%d" % (height % 100), repr(undo_info))
 
 
 
-    def init_batch(self):
-        self.batch_addr = {}  # addresses for the tree
-        self.batch_keys = {}  # everything else
-        self.delete_list = []
 
-
-    def write_batch(self):
-        batch = self.db.write_batch()
-        for k, v in self.batch_keys.items():
-            batch.put(k, v)
-        for key in self.delete_list:
-            batch.delete(key)
-        batch.write()
-        self.init_batch()
-
-
-    def add_addresses(self):
-        path_list = []
-        # add new addresses to the tree
-        for addr, serialized_hist in self.batch_addr.items():
-            if serialized_hist:
-                path = self.add_address(addr, serialized_hist)
-                path_list.append(path)
-            else:
-                self.delete_address(addr)
-
-        new_addresses = map(self.key_to_address, self.batch_addr.keys())
-        return new_addresses, path_list
-
-
-    def update_hashes(self, path_list):
-        # update node hashes
-        for path in path_list:
-            for x in path[::-1]:
-                self.update_node_hash(x)
 
 
     def common_prefix(self, word1, word2):
@@ -178,28 +130,32 @@ class Storage(object):
             index = max_len
         return word1[0:index]
 
-    def get_children(self, x):
-        i = self.db.iterator()
-        l = 0
-        while l <256:
-            i.seek(x+chr(l))
-            k, v = i.next()
-            if k.startswith(x+chr(l)): 
-                yield k, v
-                l += 1
-            elif k.startswith(x): 
-                yield k, v
-                l = ord(k[len(x)]) + 1
-            else: 
-                break
 
-    def put_node(self, key, _hash, value, item):
-        self.batch_keys[key] = repr( (_hash, value, item) )
+    def encode_letters(self, letters):
+        k = 0
+        for i in range(256):
+            if chr(i) in letters:
+                k += 1<<i
+        k = "0x%0.64X" % k
+        return k[2:].decode('hex')
+
+    def decode_letters(self, k):
+        k = int(k.encode('hex'), 16)
+        letters = ''
+        for i in range(256):
+            if k % 2 == 1: 
+                letters+= chr(i)
+            k = k/2
+        return letters
+
+
+    def put_node(self, key, letters, _hash, value, item):
+        self.put(key, repr( (self.encode_letters(letters), _hash, value, item) ) )
 
 
     def parse_node(self, s):
-        _hash, v, h = ast.literal_eval( s )
-        return _hash, v, h
+        letters, _hash, v, h = ast.literal_eval( s )
+        return self.decode_letters(letters), _hash, v, h
 
 
     def add_address(self, target, serialized_hist):
@@ -212,15 +168,11 @@ class Storage(object):
 
         while key != target:
 
-            i.seek(key + word[0])
-            try:
-                new_key, _ = i.next()
-                is_child = new_key.startswith(key + word[0])
-            except StopIteration:
-                is_child = False
-
-            if is_child:
+            letters, h, v, item = self.get_node(key)
+            if word[0] in letters:
   
+                i.seek(key + word[0])
+                new_key, _ = i.next()
                 if target.startswith(new_key):
                     # add value to the child node
                     key = new_key
@@ -233,11 +185,14 @@ class Storage(object):
                 else:
                     # prune current node and add new node
                     prefix = self.common_prefix(new_key, target)
-                    self.put_node(prefix, None, 0, None)
+                    index = len(prefix)
+                    self.put_node(prefix, target[index] + new_key[index], None, 0, None)
                     path.append(prefix)
                     break
 
             else:
+                letters += word[0]
+                self.put_node(key, letters, h, v, item)
                 assert key in path
                 break
 
@@ -248,8 +203,11 @@ class Storage(object):
         value = sum( map( lambda x:x[2], utxo ) )
 
         # write 
-        self.put_node(target,  _hash, value, serialized_hist)
-        return path
+        self.put_node(target, '', _hash, value, serialized_hist)
+
+        # update hashes
+        for x in path[::-1]:
+            self.update_node_hash(x)
 
 
 
@@ -263,16 +221,12 @@ class Storage(object):
         i = self.db.iterator()
 
         while key != target:
-            
-            i.seek(key + word[0])
-            try:
-                new_key, _ = i.next()
-                is_child = new_key.startswith(key + word[0])
-            except StopIteration:
-                is_child = False
 
-            if is_child:
+            letters, h, v, item = self.get_node(key)
+            if word[0] in letters:
   
+                i.seek(key + word[0])
+                new_key, _ = i.next()
                 if target.startswith(new_key):
                     # add value to the child node
                     key = new_key
@@ -283,9 +237,7 @@ class Storage(object):
                         assert key not in path
                         path.append(key)
                 else:
-                    #print 'new key', (key+word[0]).encode('hex'), new_key.encode('hex')
                     return False
-
             else:
                 assert key in path
                 break
@@ -300,17 +252,18 @@ class Storage(object):
             return
 
         #print "removing", addr.encode('hex')
-        self.db.delete(addr)  # if I use delete_list I need to make sure get_children still works
+        self.delete(addr) 
 
         for i in path[::-1]:
             #remove key if it has a single child
-            ch = [x for x in self.get_children(i)]
-            if len(ch) == 1:
-                #print "removing parent", i.encode('hex')
+            letters, _, value, history = self.get_node(i)
+            letters.replace(addr[len(i)],'')
+            if len(letters) == 1:
                 self.db.delete(i)
             else:
-                #print "keeping", repr(i), ch
-                pass
+                self.put_node(i, letters, '', value, history)
+                break
+
 
 
 
@@ -350,15 +303,17 @@ class Storage(object):
 
 
     def update_node_hash(self, x):
+        i = self.db.iterator()
 
         # get the hashes of children
         hashes = []
-        _, value, history = self.get_node(x)
+        letters, _, value, history = self.get_node(x)
 
         values = []
-        for k, v in self.get_children(x):
-            
-            _hash, v, _ = ast.literal_eval(v)
+        for l in letters:
+            i.seek(x+l)
+            k, v = i.next()
+            _, _hash, v, _ = ast.literal_eval(v)
             # _hash is None for fully spent addresses 
             if _hash is not None:
                 hashes.append(_hash)
@@ -373,7 +328,7 @@ class Storage(object):
             skip_string = ''
 
         _hash = self.hash( skip_string + ''.join(hashes) ) if hashes else None
-        self.put_node(x, _hash, value, history)
+        self.put_node(x, letters, _hash, value, history)
         
     def hash(self, x):
         if DEBUG: return "hash("+x+")"
@@ -381,7 +336,7 @@ class Storage(object):
 
     def get_root_hash(self):
         item = self.db.get('a')
-        _h, v, c = ast.literal_eval(item)
+        l, _h, v, c = ast.literal_eval(item)
         return _h
 
     def print_all(self):
@@ -401,17 +356,19 @@ class Storage(object):
 
 
     def add_to_history(self, addr, tx_hash, tx_pos, value, tx_height):
-        addr = self.address_to_key(addr)
-
         "add tx output to the history of addr"
         "also creates a backlink: txo-> addr"
 
+        addr = self.address_to_key(addr)
+
+        node = self.get_node(addr)
+        if node:
+            letters, h, v, serialized_hist = node
+        else: 
+            serialized_hist = ''
+
         # keep it sorted
         s = self.serialize_item(tx_hash, tx_pos, value, tx_height)
-        assert len(s) == 48
-
-        serialized_hist = self.batch_addr[addr]
-
         l = len(serialized_hist)/48
         for i in range(l-1, -1, -1):
             item = serialized_hist[48*i:48*(i+1)]
@@ -422,11 +379,12 @@ class Storage(object):
         else:
             serialized_hist = s + serialized_hist
 
-        self.batch_addr[addr] = serialized_hist
+        # write the new history
+        self.add_address(addr, serialized_hist)
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.batch_keys['b'+txo] = addr
+        self.put('b'+txo, addr)
 
 
 
@@ -434,38 +392,22 @@ class Storage(object):
     def revert_add_to_history(self, addr, tx_hash, tx_pos, value, tx_height):
         addr = self.address_to_key(addr)
 
-        serialized_hist = self.batch_addr[addr]
+        letters, h, v, serialized_hist = self.get_node(addr)
+
         s = self.serialize_item(tx_hash, tx_pos, value, tx_height)
         if serialized_hist.find(s) == -1: raise
         serialized_hist = serialized_hist.replace(s, '')
-        self.batch_addr[addr] = serialized_hist
+
+        self.add_address(addr, serialized_hist)
 
 
 
-    def prune_history(self, addr, undo):
-        raise
-        addr = self.address_to_key(addr)
-
-        # remove items that have bit set to one
-        if undo.get(addr) is None: undo[addr] = []
-
-        serialized_hist = self.batch_addr[addr]
-        l = len(serialized_hist)/96
-        for i in range(l):
-            if len(serialized_hist)/96 < self.pruning_limit: break
-            item = serialized_hist[96*i:96*(i+1)] 
-            if item[47:48] == chr(1):
-                assert item[95:96] == chr(2)
-                serialized_hist = serialized_hist[0:96*i] + serialized_hist[96*(i+1):]
-                undo[addr].append(item)  # items are ordered
-        self.batch_addr[addr] = serialized_hist
 
 
     def revert_set_spent(self, addr, undo):
         addr = self.address_to_key(addr)
 
         # restore removed items
-        serialized_hist = self.batch_addr[addr]
 
         if undo.get(addr) is not None: 
             itemlist = undo.pop(addr)
@@ -473,6 +415,8 @@ class Storage(object):
             return 
 
         if not itemlist: return
+
+        _,_,_, serialized_hist = self.get_node(addr)
 
         l = len(serialized_hist)/48
         tx_item = ''
@@ -490,21 +434,18 @@ class Storage(object):
             if item_height < tx_height:
                 serialized_hist = serialized_hist[0:48*(i+1)] + tx_item + serialized_hist[48*(i+1):]
                 tx_item = ''
-
         else:
             serialized_hist = ''.join(itemlist) + tx_item + serialized_hist
 
-        self.batch_addr[addr] = serialized_hist
+        self.add_address(addr, serialized_hist)
+
 
 
     def set_spent(self, addr, txi, txid, index, height, undo):
         addr = self.address_to_key(addr)
         if undo.get(addr) is None: undo[addr] = []
 
-        # spent_key = 'h'+ addr[1:]
-
-        utx_hist = self.batch_addr[addr]
-        # spent_hist = self.batch_keys[spent_key]
+        _,_,_, utx_hist = self.get_node(addr)
 
         l = len(utx_hist)/48
         for i in range(l):
@@ -519,9 +460,7 @@ class Storage(object):
             hist = self.deserialize(utx_hist)
             raise BaseException("prevout not found", addr, hist, txi.encode('hex'))
 
-        self.batch_addr[addr] = utx_hist
-        # self.batch_keys[spent_key] = spent_hist + new_item
-
+        self.add_address(addr, utx_hist)
 
 
 
