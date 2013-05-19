@@ -39,7 +39,7 @@ class Storage(object):
             self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
             db_version = self.db_version
             # write root
-            self.put_node('a', '',  '', 0, None)
+            self.put_node('a', '', 0, None)
 
         # check version
         if self.db_version != db_version:
@@ -74,7 +74,7 @@ class Storage(object):
         if x is None: 
             return ''
         try:
-            l, _hash, v, h = x
+            _hash, v, h = x
             return h
         except:
             traceback.print_exc(file=sys.stdout)
@@ -131,31 +131,14 @@ class Storage(object):
         return word1[0:index]
 
 
-    def encode_letters(self, letters):
-        k = 0
-        for i in range(256):
-            if chr(i) in letters:
-                k += 1<<i
-        k = "0x%0.64X" % k
-        return k[2:].decode('hex')
 
-    def decode_letters(self, k):
-        k = int(k.encode('hex'), 16)
-        letters = ''
-        for i in range(256):
-            if k % 2 == 1: 
-                letters+= chr(i)
-            k = k/2
-        return letters
-
-
-    def put_node(self, key, letters, _hash, value, item):
-        self.put(key, repr( (self.encode_letters(letters), _hash, value, item) ) )
+    def put_node(self, key, _hash, value, item):
+        self.put(key, repr( ( _hash, value, item) ) )
 
 
     def parse_node(self, s):
-        letters, _hash, v, h = ast.literal_eval( s )
-        return self.decode_letters(letters), _hash, v, h
+        _hash, v, h = ast.literal_eval( s )
+        return _hash, v, h
 
 
     def add_address(self, target, serialized_hist):
@@ -168,11 +151,15 @@ class Storage(object):
 
         while key != target:
 
-            letters, h, v, item = self.get_node(key)
-            if word[0] in letters:
-  
-                i.seek(key + word[0])
+            i.seek(key + word[0])
+            try:
                 new_key, _ = i.next()
+                is_child = new_key.startswith(key + word[0])
+            except StopIteration:
+                is_child = False
+
+            if is_child:
+  
                 if target.startswith(new_key):
                     # add value to the child node
                     key = new_key
@@ -185,14 +172,11 @@ class Storage(object):
                 else:
                     # prune current node and add new node
                     prefix = self.common_prefix(new_key, target)
-                    index = len(prefix)
-                    self.put_node(prefix, target[index] + new_key[index], None, 0, None)
+                    self.put_node(prefix, None, 0, None)
                     path.append(prefix)
                     break
 
             else:
-                letters += word[0]
-                self.put_node(key, letters, h, v, item)
                 assert key in path
                 break
 
@@ -203,7 +187,7 @@ class Storage(object):
         value = sum( map( lambda x:x[2], utxo ) )
 
         # write 
-        self.put_node(target, '', _hash, value, serialized_hist)
+        self.put_node(target, _hash, value, serialized_hist)
 
         # update hashes
         for x in path[::-1]:
@@ -222,11 +206,15 @@ class Storage(object):
 
         while key != target:
 
-            letters, h, v, item = self.get_node(key)
-            if word[0] in letters:
-  
-                i.seek(key + word[0])
+            i.seek(key + word[0])
+            try:
                 new_key, _ = i.next()
+                is_child = new_key.startswith(key + word[0])
+            except StopIteration:
+                is_child = False
+
+            if is_child:
+  
                 if target.startswith(new_key):
                     # add value to the child node
                     key = new_key
@@ -251,21 +239,31 @@ class Storage(object):
             # print_log("address not in tree", addr.encode('hex'))
             return
 
-        #print "removing", addr.encode('hex')
         self.delete(addr) 
 
         for i in path[::-1]:
             #remove key if it has a single child
-            letters, _, value, history = self.get_node(i)
-            letters.replace(addr[len(i)],'')
-            if len(letters) == 1:
+            ch = self.get_children(i)
+            if len(ch) == 1:
                 self.db.delete(i)
             else:
-                self.put_node(i, letters, '', value, history)
                 break
 
 
 
+    def get_children(self, x):
+        i = self.db.iterator()
+        l = 0
+        while l <256:
+            i.seek(x+chr(l))
+            k, v = i.next()
+            if k.startswith(x+chr(l)): 
+                yield k, v
+                l += 1
+            elif k.startswith(x): 
+                l = ord(k[len(x)])
+            else: 
+                break
 
 
 
@@ -307,14 +305,10 @@ class Storage(object):
 
         # get the hashes of children
         hashes = []
-        letters, _, value, history = self.get_node(x)
-
         values = []
-        for l in letters:
-            i.seek(x+l)
-            k, v = i.next()
-            _, _hash, v, _ = ast.literal_eval(v)
-            # _hash is None for fully spent addresses 
+
+        for k,v in self.get_children(x):
+            _hash, v, _ = ast.literal_eval(v)
             if _hash is not None:
                 hashes.append(_hash)
                 values.append(v)
@@ -328,7 +322,7 @@ class Storage(object):
             skip_string = ''
 
         _hash = self.hash( skip_string + ''.join(hashes) ) if hashes else None
-        self.put_node(x, letters, _hash, value, history)
+        self.put_node(x, _hash, value, None)
         
     def hash(self, x):
         if DEBUG: return "hash("+x+")"
@@ -336,7 +330,7 @@ class Storage(object):
 
     def get_root_hash(self):
         item = self.db.get('a')
-        l, _h, v, c = ast.literal_eval(item)
+        _h, v, c = ast.literal_eval(item)
         return _h
 
     def print_all(self):
@@ -363,7 +357,7 @@ class Storage(object):
 
         node = self.get_node(addr)
         if node:
-            letters, h, v, serialized_hist = node
+            _, _, serialized_hist = node
         else: 
             serialized_hist = ''
 
@@ -392,7 +386,7 @@ class Storage(object):
     def revert_add_to_history(self, addr, tx_hash, tx_pos, value, tx_height):
         addr = self.address_to_key(addr)
 
-        letters, h, v, serialized_hist = self.get_node(addr)
+        _, _, serialized_hist = self.get_node(addr)
 
         s = self.serialize_item(tx_hash, tx_pos, value, tx_height)
         if serialized_hist.find(s) == -1: raise
@@ -416,7 +410,7 @@ class Storage(object):
 
         if not itemlist: return
 
-        _,_,_, serialized_hist = self.get_node(addr)
+        _,_, serialized_hist = self.get_node(addr)
 
         l = len(serialized_hist)/48
         tx_item = ''
@@ -445,7 +439,7 @@ class Storage(object):
         addr = self.address_to_key(addr)
         if undo.get(addr) is None: undo[addr] = []
 
-        _,_,_, utx_hist = self.get_node(addr)
+        _,_,utx_hist = self.get_node(addr)
 
         l = len(utx_hist)/48
         for i in range(l):
