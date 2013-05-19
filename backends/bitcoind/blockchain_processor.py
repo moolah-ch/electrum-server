@@ -426,7 +426,7 @@ class BlockchainProcessor(Processor):
         # add the max
         self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
-        for addr in touched_add:
+        for addr in touched_addr:
             self.invalidate_cache(addr)
 
 
