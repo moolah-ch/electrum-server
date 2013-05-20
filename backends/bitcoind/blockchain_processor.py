@@ -336,8 +336,6 @@ class BlockchainProcessor(Processor):
     def import_block(self, block, block_hash, block_height, sync, revert=False):
         self.mtime('')
 
-        block_inputs = []
-        block_outputs = []
         touched_addr = []
 
         # deserialize transactions
@@ -364,12 +362,9 @@ class BlockchainProcessor(Processor):
                 for i, x in enumerate(tx.get('inputs')):
                     txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
                     addr = self.storage.get_address(txi)
-
                     # Add redeem item to the history.
                     self.storage.set_spent(addr, txi, txid, i, block_height, undo)
                     touched_addr.append(addr)
-
-                    ##self.storage.prune_history(addr, undo)
                     prev_addr.append(addr)
 
                 undo['prev_addr'] = prev_addr 
@@ -379,7 +374,6 @@ class BlockchainProcessor(Processor):
                     addr = x.get('address')
                     self.storage.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
                     touched_addr.append(addr)
-                    ##self.storage.prune_history(addr, undo)  # prune here because we increased the length of the history
 
                 undo_info[txid] = undo
 
@@ -389,16 +383,14 @@ class BlockchainProcessor(Processor):
 
                 for x in tx.get('outputs'):
                     addr = x.get('address')
-                    ## self.storage.revert_prune_history(addr, undo)
                     self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
                     touched_addr.append(addr)
 
                 prev_addr = undo.pop('prev_addr')
                 for i, x in enumerate(tx.get('inputs')):
                     addr = prev_addr[i]
-                    ## self.storage.revert_prune_history(addr, undo)
-                    #txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                    self.storage.revert_set_spent(addr, undo)
+                    txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
+                    self.storage.revert_set_spent(addr, txi, undo)
                     touched_addr.append(addr)
 
                 assert undo == {}
@@ -408,20 +400,9 @@ class BlockchainProcessor(Processor):
 
         self.mtime('process')
             
-        # prepare storage for write 
+        # add undo info
         if not revert:
-
-            # delete spent inputs
-            for txi in block_inputs:
-                self.storage.delete(txi)
-
-            # add undo info
             self.storage.write_undo_info(block_height, self.bitcoind_height, undo_info)
-        else:
-
-            # delete spent outputs
-            for txo in block_outputs:
-                self.storage.delete(txo)
 
         # add the max
         self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))

@@ -7,6 +7,11 @@ from utils import *
 todo: 
  * store spent histories 
  * miners
+
+root hash:
+@1000:  56fe80bfee7ae86e109254d197b26679e2ba5d808f7d856e47ea21b5ed2f2f17
+@10000: 05a728d62caa3248a4b0b284b4a2e9492114d42eee297a9ed8f4bd279db823aa
+
 """
 
 DEBUG = False
@@ -92,10 +97,8 @@ class Storage(object):
 
     def get_address(self, txi):
         txi = 'b' + txi
-
         addr = self.db_get(txi)
         return self.key_to_address(addr) if addr else None
-
 
 
     def put(self, key, value):
@@ -192,7 +195,6 @@ class Storage(object):
         # update hashes
         for x in path[::-1]:
             self.update_node_hash(x)
-
 
 
 
@@ -394,15 +396,20 @@ class Storage(object):
 
         self.add_address(addr, serialized_hist)
 
+        # backlink
+        txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
+        self.db.delete('b'+txo)
 
 
 
 
-    def revert_set_spent(self, addr, undo):
+    def revert_set_spent(self, addr, txi, undo):
         addr = self.address_to_key(addr)
 
-        # restore removed items
+        # restore backlink
+        self.put('b' + txi, addr)
 
+        # restore removed items
         if undo.get(addr) is not None: 
             itemlist = undo.pop(addr)
         else:
@@ -435,6 +442,9 @@ class Storage(object):
 
 
 
+
+
+
     def set_spent(self, addr, txi, txid, index, height, undo):
         addr = self.address_to_key(addr)
         if undo.get(addr) is None: undo[addr] = []
@@ -455,6 +465,9 @@ class Storage(object):
             raise BaseException("prevout not found", addr, hist, txi.encode('hex'))
 
         self.add_address(addr, utx_hist)
+
+        # delete backlink txi-> addr
+        self.delete('b'+txi)
 
 
 
