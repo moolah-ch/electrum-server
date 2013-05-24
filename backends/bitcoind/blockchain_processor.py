@@ -72,6 +72,8 @@ class BlockchainProcessor(Processor):
         # catch_up headers
         self.init_headers(self.storage.height)
 
+        #self.storage.update_all_hashes()
+
         threading.Timer(0, lambda: self.catch_up(sync=False)).start()
         while not shared.stopped() and not self.up_to_date:
             try:
@@ -84,6 +86,7 @@ class BlockchainProcessor(Processor):
         print_log("Blockchain is up to date.")
         self.memorypool_update()
         print_log("Memory pool initialized.")
+
 
         threading.Timer(10, self.main_iteration).start()
 
@@ -363,8 +366,9 @@ class BlockchainProcessor(Processor):
                     txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
                     addr = self.storage.get_address(txi)
                     # Add redeem item to the history.
-                    self.storage.set_spent(addr, txi, txid, i, block_height, undo)
-                    touched_addr.append(addr)
+                    if addr is not None: 
+                        self.storage.set_spent(addr, txi, txid, i, block_height, undo)
+                        touched_addr.append(addr)
                     prev_addr.append(addr)
 
                 undo['prev_addr'] = prev_addr 
@@ -372,6 +376,7 @@ class BlockchainProcessor(Processor):
                 # here I add only the outputs to history; maybe I want to add inputs too (that's in the other loop)
                 for x in tx.get('outputs'):
                     addr = x.get('address')
+                    if addr is None: continue
                     self.storage.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
                     touched_addr.append(addr)
 
@@ -383,15 +388,17 @@ class BlockchainProcessor(Processor):
 
                 for x in tx.get('outputs'):
                     addr = x.get('address')
+                    if addr is None: continue
                     self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
                     touched_addr.append(addr)
 
                 prev_addr = undo.pop('prev_addr')
                 for i, x in enumerate(tx.get('inputs')):
                     addr = prev_addr[i]
-                    txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                    self.storage.revert_set_spent(addr, txi, undo)
-                    touched_addr.append(addr)
+                    if addr is not None:
+                        txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
+                        self.storage.revert_set_spent(addr, txi, undo)
+                        touched_addr.append(addr)
 
                 assert undo == {}
 
@@ -559,9 +566,12 @@ class BlockchainProcessor(Processor):
 
                 if self.storage.height % 100 == 0 and not sync:
                     t2 = time.time()
-                    print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
+                    self.storage.update_all_hashes()
+                    t3 = time.time()
+                    print_log("catch_up: block %d (%.3fs %.3fs)" % (self.storage.height, t2 - t1, t3-t2), self.storage.get_root_hash().encode('hex'))
                     # self.print_mtime()
                     t1 = t2
+
 
             else:
                 # revert current block

@@ -399,7 +399,7 @@ def get_address_from_output_script(bytes):
     # DUP HASH160 20 BYTES:... EQUALVERIFY CHECKSIG
     match = [opcodes.OP_DUP, opcodes.OP_HASH160, opcodes.OP_0, opcodes.OP_EQUALVERIFY, opcodes.OP_CHECKSIG]
     if match_decoded(decoded, match):
-        return "None"
+        return None
 
     # Pay-by-Bitcoin-address TxOuts look like:
     # DUP HASH160 20 BYTES:... EQUALVERIFY CHECKSIG
@@ -418,4 +418,4 @@ def get_address_from_output_script(bytes):
         addr = hash_160_to_bc_address(decoded[1][1],5)
         return addr
 
-    return "None"
+    return None

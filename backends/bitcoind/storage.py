@@ -11,7 +11,7 @@ todo:
 root hash:
 @1000:  56fe80bfee7ae86e109254d197b26679e2ba5d808f7d856e47ea21b5ed2f2f17
 @10000: 05a728d62caa3248a4b0b284b4a2e9492114d42eee297a9ed8f4bd279db823aa
-
+@100000:c3bc43a7cae6aa8c1fcecbfa52d72ee1afe80634a1f1d72b3cf1dd9f37edf427
 """
 
 DEBUG = False
@@ -193,8 +193,15 @@ class Storage(object):
         self.put_node(target, _hash, value, serialized_hist)
 
         # update hashes
-        for x in path[::-1]:
-            self.update_node_hash(x)
+        #for x in path[::-1]:
+        #    self.update_node_hash(x)
+
+    def update_all_hashes(self):
+        for j in range(20, 0, -1):
+            i = self.db.iterator(start='a', stop='b')
+            for k, v in i:
+                if len(k)==j:
+                    self.update_node_hash(k)
 
 
 
@@ -238,16 +245,16 @@ class Storage(object):
     def delete_address(self, addr):
         path = self.get_path(addr)
         if path is False:
-            # print_log("address not in tree", addr.encode('hex'))
+            print_log("address not in tree", addr.encode('hex'))
             return
 
-        self.delete(addr) 
+        self.delete(addr)
 
         for i in path[::-1]:
             #remove key if it has a single child
             ch = self.get_children(i)
-            if len(ch) == 1:
-                self.db.delete(i)
+            if len([x for x in ch]) == 1:
+                self.delete(i)
             else:
                 break
 
@@ -263,7 +270,8 @@ class Storage(object):
                 yield k, v
                 l += 1
             elif k.startswith(x): 
-                l = ord(k[len(x)])
+                yield k, v
+                l = ord(k[len(x)]) + 1
             else: 
                 break
 
@@ -308,13 +316,23 @@ class Storage(object):
         # get the hashes of children
         hashes = []
         values = []
+        ch = [ xx for xx in self.get_children(x)]
 
-        for k,v in self.get_children(x):
+        for k,v in ch:
             _hash, v, _ = ast.literal_eval(v)
-            if _hash is not None:
-                hashes.append(_hash)
-                values.append(v)
+            try:
+                assert _hash is not None
+            except:
+                print repr(x), repr(k)
+                raise
+            hashes.append(_hash)
+            values.append(v)
 
+        try:
+            assert len(hashes) > 1
+        except:
+            print repr(x), ch, hashes
+            raise
         value = sum( values )
 
         # final hash
@@ -323,7 +341,8 @@ class Storage(object):
         else:
             skip_string = ''
 
-        _hash = self.hash( skip_string + ''.join(hashes) ) if hashes else None
+        _hash = self.hash( skip_string + ''.join(hashes) )
+
         self.put_node(x, _hash, value, None)
         
     def hash(self, x):
@@ -417,7 +436,11 @@ class Storage(object):
 
         if not itemlist: return
 
-        _,_, serialized_hist = self.get_node(addr)
+        n = self.get_node(addr)
+        if n:
+            _,_, serialized_hist = n 
+        else:
+            serialized_hist = ''
 
         l = len(serialized_hist)/48
         tx_item = ''
@@ -464,7 +487,10 @@ class Storage(object):
             hist = self.deserialize(utx_hist)
             raise BaseException("prevout not found", addr, hist, txi.encode('hex'))
 
-        self.add_address(addr, utx_hist)
+        if utx_hist:
+            self.add_address(addr, utx_hist)
+        else:
+            self.delete_address(addr)
 
         # delete backlink txi-> addr
         self.delete('b'+txi)
