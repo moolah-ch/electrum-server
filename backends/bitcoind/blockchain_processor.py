@@ -350,7 +350,6 @@ class BlockchainProcessor(Processor):
         else:
             undo_info = {}
 
-
         # process
         if revert:
             tx_hashes = tx_hashes[::-1]
@@ -358,49 +357,11 @@ class BlockchainProcessor(Processor):
         for txid in tx_hashes:  # must be ordered
             tx = txdict[txid]
             if not revert:
-
-                undo = { 'prev_addr':[] } # contains the list of pruned items for each address in the tx; also, 'prev_addr' is a list of prev addresses
-                
-                prev_addr = []
-                for i, x in enumerate(tx.get('inputs')):
-                    txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                    addr = self.storage.get_address(txi)
-                    # Add redeem item to the history.
-                    if addr is not None: 
-                        self.storage.set_spent(addr, txi, txid, i, block_height, undo)
-                        touched_addr.append(addr)
-                    prev_addr.append(addr)
-
-                undo['prev_addr'] = prev_addr 
-
-                # here I add only the outputs to history; maybe I want to add inputs too (that's in the other loop)
-                for x in tx.get('outputs'):
-                    addr = x.get('address')
-                    if addr is None: continue
-                    self.storage.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
-                    touched_addr.append(addr)
-
+                undo = self.storage.import_transaction(txid, tx, block_height, touched_addr)
                 undo_info[txid] = undo
-
             else:
-
                 undo = undo_info.pop(txid)
-
-                for x in tx.get('outputs'):
-                    addr = x.get('address')
-                    if addr is None: continue
-                    self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
-                    touched_addr.append(addr)
-
-                prev_addr = undo.pop('prev_addr')
-                for i, x in enumerate(tx.get('inputs')):
-                    addr = prev_addr[i]
-                    if addr is not None:
-                        txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                        self.storage.revert_set_spent(addr, txi, undo)
-                        touched_addr.append(addr)
-
-                assert undo == {}
+                self.storage.revert_transaction(txid, tx, block_height, touched_addr, undo)
 
         if revert:
             assert undo_info == {}
@@ -412,7 +373,7 @@ class BlockchainProcessor(Processor):
             self.storage.write_undo_info(block_height, self.bitcoind_height, undo_info)
 
         # add the max
-        self.storage.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
+        self.storage.db.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
         for addr in touched_addr:
             self.invalidate_cache(addr)

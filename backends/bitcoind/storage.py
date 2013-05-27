@@ -64,6 +64,7 @@ class Storage(object):
 
 
     def db_get(self, key):
+
         try:
             return self.db.get(key)
         except:
@@ -100,13 +101,11 @@ class Storage(object):
         addr = self.db_get(txi)
         return self.key_to_address(addr) if addr else None
 
-
     def put(self, key, value):
         self.db.put(key, value)
 
     def delete(self, key):
         self.db.delete(key)
-
 
     def get_undo_info(self, height):
         s = self.db.get("undo%d" % (height % 100))
@@ -116,7 +115,7 @@ class Storage(object):
 
     def write_undo_info(self, height, bitcoind_height, undo_info):
         if height > bitcoind_height - 100 or self.test_reorgs:
-            self.put("undo%d" % (height % 100), repr(undo_info))
+            self.db.put("undo%d" % (height % 100), repr(undo_info))
 
 
 
@@ -183,25 +182,32 @@ class Storage(object):
                 assert key in path
                 break
 
+        self.update_history(target, serialized_hist)
 
+
+    def update_history(self, addr, serialized_hist):
         # compute hash and value of the final node
         utxo = self.get_unspent(serialized_hist)
         _hash = self.hash_tree(map( lambda x:x[4], utxo)) if utxo else None
         value = sum( map( lambda x:x[2], utxo ) )
-
         # write 
-        self.put_node(target, _hash, value, serialized_hist)
+        self.put_node(addr, _hash, value, serialized_hist)
 
         # update hashes
         #for x in path[::-1]:
         #    self.update_node_hash(x)
 
+
     def update_all_hashes(self):
+
         for j in range(20, 0, -1):
+            wb = self.db.write_batch()
             i = self.db.iterator(start='a', stop='b')
             for k, v in i:
                 if len(k)==j:
-                    self.update_node_hash(k)
+                    _hash, value = self.update_node_hash(k)
+                    wb.put(k, repr( ( _hash, value, None ) ) )
+            wb.write()
 
 
 
@@ -211,7 +217,7 @@ class Storage(object):
         word = target[1:]
         key = 'a'
         path = [ 'a' ]
-        i = self.db.iterator()
+        i = self.db.iterator(start='a', stop='b')
 
         while key != target:
 
@@ -234,6 +240,7 @@ class Storage(object):
                         assert key not in path
                         path.append(key)
                 else:
+                    print_log('not in tree', self.db.get(key+word[0]), new_key.encode('hex'))
                     return False
             else:
                 assert key in path
@@ -245,7 +252,8 @@ class Storage(object):
     def delete_address(self, addr):
         path = self.get_path(addr)
         if path is False:
-            print_log("address not in tree", addr.encode('hex'))
+            print_log("address not in tree", addr.encode('hex'), self.key_to_address(addr), self.db.get(addr))
+            raise
             return
 
         self.delete(addr)
@@ -343,7 +351,10 @@ class Storage(object):
 
         _hash = self.hash( skip_string + ''.join(hashes) )
 
-        self.put_node(x, _hash, value, None)
+        return _hash, value
+
+        #self.put_node(x, _hash, value, None)
+
         
     def hash(self, x):
         if DEBUG: return "hash("+x+")"
@@ -395,7 +406,10 @@ class Storage(object):
             serialized_hist = s + serialized_hist
 
         # write the new history
-        self.add_address(addr, serialized_hist)
+        if not node:
+            self.add_address(addr, serialized_hist)
+        else:
+            self.update_history(addr, serialized_hist)
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
@@ -413,11 +427,14 @@ class Storage(object):
         if serialized_hist.find(s) == -1: raise
         serialized_hist = serialized_hist.replace(s, '')
 
-        self.add_address(addr, serialized_hist)
+        if serialized_hist:
+            self.update_history(addr, serialized_hist)
+        else:
+            self.delete_address(addr)
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.db.delete('b'+txo)
+        self.delete('b'+txo)
 
 
 
@@ -436,9 +453,9 @@ class Storage(object):
 
         if not itemlist: return
 
-        n = self.get_node(addr)
-        if n:
-            _,_, serialized_hist = n 
+        node = self.get_node(addr)
+        if node:
+            _,_, serialized_hist = node
         else:
             serialized_hist = ''
 
@@ -461,7 +478,11 @@ class Storage(object):
         else:
             serialized_hist = ''.join(itemlist) + tx_item + serialized_hist
 
-        self.add_address(addr, serialized_hist)
+
+        if node:
+            self.update_history(addr, serialized_hist)
+        else:
+            self.add_address(addr, serialized_hist)
 
 
 
@@ -488,7 +509,7 @@ class Storage(object):
             raise BaseException("prevout not found", addr, hist, txi.encode('hex'))
 
         if utx_hist:
-            self.add_address(addr, utx_hist)
+            self.update_history(addr, utx_hist)
         else:
             self.delete_address(addr)
 
@@ -536,4 +557,46 @@ class Storage(object):
         return h
 
 
+    def import_transaction(self, txid, tx, block_height, touched_addr):
+
+        undo = { 'prev_addr':[] } # contains the list of pruned items for each address in the tx; also, 'prev_addr' is a list of prev addresses
+                
+        prev_addr = []
+        for i, x in enumerate(tx.get('inputs')):
+            txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
+            addr = self.get_address(txi)
+            # Add redeem item to the history.
+            if addr is not None: 
+                self.set_spent(addr, txi, txid, i, block_height, undo)
+                touched_addr.append(addr)
+            prev_addr.append(addr)
+
+        undo['prev_addr'] = prev_addr 
+
+        # here I add only the outputs to history; maybe I want to add inputs too (that's in the other loop)
+        for x in tx.get('outputs'):
+            addr = x.get('address')
+            if addr is None: continue
+            self.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
+            touched_addr.append(addr)
+
+        return undo, touched_addr
+
+
+    def revert_transaction(self, txid, tx, block_height, touched_addr, undo):
+        for x in tx.get('outputs'):
+            addr = x.get('address')
+            if addr is None: continue
+            self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
+            touched_addr.append(addr)
+
+        prev_addr = undo.pop('prev_addr')
+        for i, x in enumerate(tx.get('inputs')):
+            addr = prev_addr[i]
+            if addr is not None:
+                txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
+                self.storage.revert_set_spent(addr, txi, undo)
+                touched_addr.append(addr)
+
+        assert undo == {}
 
