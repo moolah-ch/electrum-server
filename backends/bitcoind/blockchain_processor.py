@@ -81,7 +81,9 @@ class BlockchainProcessor(Processor):
             except:
                 print "keyboard interrupt: stopping threads"
                 shared.stop()
-                sys.exit(0)
+
+        if self.shared.stopped():
+            sys.exit(0)
 
         print_log("Blockchain is up to date.")
         self.memorypool_update()
@@ -527,12 +529,12 @@ class BlockchainProcessor(Processor):
 
                 if self.storage.height % 100 == 0 and not sync:
                     t2 = time.time()
-                    self.storage.update_all_hashes()
-                    t3 = time.time()
-                    print_log("catch_up: block %d (%.3fs %.3fs)" % (self.storage.height, t2 - t1, t3-t2), self.storage.get_root_hash().encode('hex'))
+                    print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
                     # self.print_mtime()
                     t1 = t2
 
+                #if self.storage.height == 1000:
+                #    self.shared.stop()
 
             else:
                 # revert current block
@@ -547,6 +549,8 @@ class BlockchainProcessor(Processor):
                 # read previous header from disk
                 self.header = self.read_header(self.storage.height)
                 self.storage.last_hash = self.hash_header(self.header)
+
+            #print "z", self.storage.height, Hash(self.storage.root_hash).encode('hex'), self.storage.root_hash
 
         self.header = self.block2header(self.bitcoind('getblock', [self.storage.last_hash]))
 
