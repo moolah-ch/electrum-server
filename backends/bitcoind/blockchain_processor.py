@@ -527,7 +527,7 @@ class BlockchainProcessor(Processor):
                 self.write_header(self.block2header(next_block), sync)
                 self.storage.last_hash = next_block_hash
 
-                if self.storage.height % 100 == 0 and not sync:
+                if self.storage.height % 10 == 0 and not sync:
                     t2 = time.time()
                     print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
                     # self.print_mtime()

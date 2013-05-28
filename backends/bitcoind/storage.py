@@ -196,13 +196,21 @@ class Storage(object):
                     prefix = self.common_prefix(new_key, target)
                     index = len(prefix)
 
-                    # get hash and value of new_key from parent
-                    parent_key, _ = self.get_parent(new_key)
-                    parent = self.get_node(parent_key)
-                    z = parent[ new_key[len(parent_key)] ]
+                    ## get hash and value of new_key from parent (if it's a leaf)
+                    if len(new_key) == 21:
+                        parent_key, _ = self.get_parent(new_key)
+                        parent = self.get_node(parent_key)
+                        z = parent[ new_key[len(parent_key)] ]
+                    else:
+                        z = (None, 0)
 
                     self.put_node(prefix, { target[index]:(None,0), new_key[index]:z } )
-                    #print "adding parent", prefix.encode('hex')
+
+                    # if it is not a leaf, update the hash of new_key because skip_string changed
+                    if len(new_key) != 21:
+                        h, v = self.get_node_hash(new_key)
+                        self.update_node_hash(prefix, new_key, h, v)
+
                     path.append(prefix)
                     break
 
@@ -255,6 +263,12 @@ class Storage(object):
         else:
             skip_string = ''
 
+        if skip_string:
+            print "hashing skip string", skip_string.encode('hex'), x.encode('hex')
+
+        if x.encode('hex') == '6135d3':
+            print "updating skip_string", repr(skip_string)
+
         _hash = self.hash( skip_string + ''.join(hashes) )
 
         return x, _hash, value
@@ -269,6 +283,10 @@ class Storage(object):
             parent, skip_string = self.get_parent(x)
         else:
             skip_string = ''
+
+        if skip_string:
+            print "hashing skip string", skip_string.encode('hex'), x.encode('hex')
+
         _hash = self.hash( skip_string + ''.join(hashes) )
 
         return _hash, value
