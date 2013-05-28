@@ -22,7 +22,7 @@ class Storage(object):
     def __init__(self, config, shared, test_reorgs):
         # address: 20 bytes + 1 (we don't need to add that byte)
 
-        self.dbpath = config.get('leveldb', 'path_plyvel')
+        self.dbpath = config.get('leveldb', 'path_hashtree')
         self.pruning_limit = config.getint('leveldb', 'pruning_limit')
         self.shared = shared
         self.test_reorgs = test_reorgs
@@ -551,9 +551,9 @@ class Storage(object):
         h = []
         while s:
             txid, txpos, value, height, spent = self.deserialize_item(s[0:48])
-            if spent == chr(0):
-                h.append((txid, txpos, value, height, s[0:44]))
-            s = s[96:]
+            assert spent == chr(0)
+            h.append((txid, txpos, value, height, Hash(s[0:44])))
+            s = s[48:]
         return h
 
 
@@ -580,14 +580,14 @@ class Storage(object):
             self.add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
             touched_addr.append(addr)
 
-        return undo, touched_addr
+        return undo
 
 
     def revert_transaction(self, txid, tx, block_height, touched_addr, undo):
         for x in tx.get('outputs'):
             addr = x.get('address')
             if addr is None: continue
-            self.storage.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
+            self.revert_add_to_history(addr, txid, x.get('index'), x.get('value'), block_height)
             touched_addr.append(addr)
 
         prev_addr = undo.pop('prev_addr')
@@ -595,7 +595,7 @@ class Storage(object):
             addr = prev_addr[i]
             if addr is not None:
                 txi = (x.get('prevout_hash') + int_to_hex(x.get('prevout_n'), 4)).decode('hex')
-                self.storage.revert_set_spent(addr, txi, undo)
+                self.revert_set_spent(addr, txi, undo)
                 touched_addr.append(addr)
 
         assert undo == {}

@@ -81,7 +81,9 @@ class BlockchainProcessor(Processor):
             except:
                 print "keyboard interrupt: stopping threads"
                 shared.stop()
-                sys.exit(0)
+
+        if self.shared.stopped():
+            sys.exit(0)
 
         print_log("Blockchain is up to date.")
         self.memorypool_update()
