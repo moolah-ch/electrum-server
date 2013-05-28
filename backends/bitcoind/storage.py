@@ -7,12 +7,8 @@ from utils import *
 todo: 
  * store spent histories 
  * miners
-
-@100:    1f690b6ddb61537b11a7b80a5f32fc9b1f5d2c8bba05b1177273008e56f5b097
-@1000:   931393b394a9601a4f7604f1a46491dfffb8c0c113e87caabca54867c6a3d599
-@10000:  0a830db8f0a2eeeb66269dc0afe48c7f4a58559d83979d0ff1062ca43a47ded3
-@100000: 
 """
+
 
 DEBUG = 0
 
@@ -126,8 +122,6 @@ class Storage(object):
 
 
     def put_node(self, key, d):
-        #self.put(key, repr(d))
-        #return
         k = 0
         serialized = ''
         for i in range(256):
@@ -148,7 +142,6 @@ class Storage(object):
 
     def get_node(self, key):
         s = self.db_get(key)
-        #return ast.literal_eval( s )
         if s is None: return 
         k = int(s[0:32].encode('hex'), 16)
         s = s[32:]
@@ -165,8 +158,6 @@ class Storage(object):
 
     def add_address(self, target, serialized_hist):
         assert target[0] == 'a'
-
-        #print "adding", target.encode('hex')
 
         word = target[1:]
         key = 'a'
@@ -216,15 +207,12 @@ class Storage(object):
 
             else:
                 assert key in path
-                #print "added ", word[0].encode('hex'), " to existing parent", key.encode('hex')
                 items[ word[0] ] = (None,0)
                 self.put_node(key,items)
                 break
 
         # write 
         self.put(target, serialized_hist)
-
-        #if DEBUG:  self.print_all()
 
         # compute hash and value of the final node
         utxo = self.get_unspent(serialized_hist)
@@ -328,7 +316,6 @@ class Storage(object):
             raise
 
         self.delete(addr)
-        #print "deleting", addr.encode('hex')
 
         p = path[-1]
         letter = addr[len(p)]
@@ -337,21 +324,16 @@ class Storage(object):
 
         # remove key if it has a single child
         if len(items) == 1:
-            # get leaf hash
             _hash, value = items.values()[0]
-            #print "deleting parent", p.encode('hex'), items.keys()
             self.delete(p)
             path = path[:-1]
             # we can pass p instead of the whole leaf
             self.update_hashes(path, p, _hash, value)
 
         else:
-            #print "just removed key ", letter.encode('hex'), "from parent", p.encode('hex'), items.keys()
             self.put_node(p, items)
-            
             final = path[-1]
             _hash, value = self.get_node_hash(final)
-
             self.update_hashes(path[:-1], final, _hash, value)
 
 
@@ -375,7 +357,6 @@ class Storage(object):
 
 
     def hash_tree(self, base_list):
-        # etotheipi_ : (TxHash:TxOutIndex:Value) would be hashed to produce the node IDs
         if DEBUG: return "h"
 
         merkle = base_list
