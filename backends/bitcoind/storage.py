@@ -258,13 +258,11 @@ class Storage(object):
 
         self.delete(addr)
 
-        for i in path[::-1]:
-            #remove key if it has a single child
-            ch = self.get_children(i)
-            if len([x for x in ch]) == 1:
-                self.delete(i)
-            else:
-                break
+        p = path[-1]
+        #remove key if it has a single child
+        ch = self.get_children(p)
+        if len([x for x in ch]) == 1:
+            self.delete(p)
 
 
 
