@@ -347,6 +347,9 @@ class Storage(object):
         else:
             skip_string = ''
 
+        if skip_string:
+            print "hashing skip string", skip_string.encode('hex')
+
         _hash = self.hash( skip_string + ''.join(hashes) )
 
         return _hash, value
