@@ -263,12 +263,6 @@ class Storage(object):
         else:
             skip_string = ''
 
-        if skip_string:
-            print "hashing skip string", skip_string.encode('hex'), x.encode('hex')
-
-        if x.encode('hex') == '6135d3':
-            print "updating skip_string", repr(skip_string)
-
         _hash = self.hash( skip_string + ''.join(hashes) )
 
         return x, _hash, value
@@ -283,9 +277,6 @@ class Storage(object):
             parent, skip_string = self.get_parent(x)
         else:
             skip_string = ''
-
-        if skip_string:
-            print "hashing skip string", skip_string.encode('hex'), x.encode('hex')
 
         _hash = self.hash( skip_string + ''.join(hashes) )
 
