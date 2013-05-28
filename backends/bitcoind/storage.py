@@ -22,7 +22,7 @@ class Storage(object):
     def __init__(self, config, shared, test_reorgs):
         # address: 20 bytes + 1 (we don't need to add that byte)
 
-        self.dbpath = config.get('leveldb', 'path_plyvel')
+        self.dbpath = config.get('leveldb', 'path_hashtree2')
         self.pruning_limit = config.getint('leveldb', 'pruning_limit')
         self.shared = shared
         self.test_reorgs = test_reorgs
