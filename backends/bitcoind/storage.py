@@ -6,16 +6,9 @@ from utils import *
 """
 todo: 
  * store spent histories 
- * miners
-
-root hash:
-@1000:  56fe80bfee7ae86e109254d197b26679e2ba5d808f7d856e47ea21b5ed2f2f17
-@10000: 05a728d62caa3248a4b0b284b4a2e9492114d42eee297a9ed8f4bd279db823aa
-@100000:c3bc43a7cae6aa8c1fcecbfa52d72ee1afe80634a1f1d72b3cf1dd9f37edf427
 """
 
 DEBUG = False
-
 
 class Storage(object):
 
@@ -182,10 +175,11 @@ class Storage(object):
                 assert key in path
                 break
 
-        self.update_history(target, serialized_hist)
+        self.update_history(target, serialized_hist, path)
 
 
-    def update_history(self, addr, serialized_hist):
+    def update_history(self, addr, serialized_hist, path=None):
+
         # compute hash and value of the final node
         utxo = self.get_unspent(serialized_hist)
         _hash = self.hash_tree(map( lambda x:x[4], utxo)) if utxo else None
@@ -194,6 +188,8 @@ class Storage(object):
         self.put_node(addr, _hash, value, serialized_hist)
 
         # update hashes
+        #if path is None:
+        #    path = self.get_path(addr)
         #for x in path[::-1]:
         #    self.update_node_hash(x)
 
