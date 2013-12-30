@@ -46,7 +46,7 @@ class Storage(object):
             self.last_hash = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
             db_version = self.db_version
             # write root
-            self.put_node('a', {})
+            self.put_node('', {})
 
         # check version
         if self.db_version != db_version:
@@ -56,28 +56,17 @@ class Storage(object):
 
 
 
-    # convert between bitcoin addresses and 21 bytes keys used for storage. 
+    # convert between bitcoin addresses and 20 bytes keys used for storage. 
     def address_to_key(self, addr):
-        return 'a' + bc_address_to_hash_160(addr)
+        return bc_address_to_hash_160(addr)
 
     def key_to_address(self, addr):
-        return hash_160_to_bc_address(addr[1:])
-
-
-
-    def db_addr_get(self, key):
-        try:
-            return self.db_addr.get(key)
-        except:
-            print_log("db get error", key)
-            traceback.print_exc(file=sys.stdout)
-            self.shared.stop()
-            raise
+        return hash_160_to_bc_address(addr)
 
 
     def get_history(self, addr):
         addr = self.address_to_key(addr)
-        x = self.db_addr_get(addr)
+        x = self.db_addr.get(addr)
         if x is None: 
             return ''
         try:
@@ -106,10 +95,6 @@ class Storage(object):
             self.db.put("undo%d" % (height % 100), repr(undo_info))
 
 
-
-
-
-
     def common_prefix(self, word1, word2):
         max_len = min(len(word1),len(word2))
         for i in range(max_len):
@@ -119,7 +104,6 @@ class Storage(object):
         else:
             index = max_len
         return word1[0:index]
-
 
 
     def put_node(self, key, d, batch=None):
@@ -147,7 +131,7 @@ class Storage(object):
 
     def get_node(self, key):
 
-        s = self.db_addr_get(key)
+        s = self.db_addr.get(key)
         if s is None: return 
         k = int(s[0:32].encode('hex'), 16)
         s = s[32:]
@@ -165,11 +149,10 @@ class Storage(object):
 
 
     def add_address(self, target, serialized_hist):
-        assert target[0] == 'a'
 
-        word = target[1:]
-        key = 'a'
-        path = [ 'a' ]
+        word = target
+        key = ''
+        path = [ '' ]
         i = self.db_addr.iterator()
 
         while key != target:
@@ -196,7 +179,7 @@ class Storage(object):
                     index = len(prefix)
 
                     ## get hash and value of new_key from parent (if it's a leaf)
-                    if len(new_key) == 21:
+                    if len(new_key) == 20:
                         parent_key = self.get_parent(new_key)
                         parent = self.get_node(parent_key)
                         z = parent[ new_key[len(parent_key)] ]
@@ -239,7 +222,7 @@ class Storage(object):
     def update_hashes(self):
         nodes = {} # nodes to write
 
-        for i in range(21, 0, -1):
+        for i in range(20, -1, -1):
 
             for node in self.hash_list.keys():
                 if len(node) != i: continue
@@ -247,7 +230,7 @@ class Storage(object):
                 node_hash, node_value = self.hash_list.pop(node)
 
                 # for each node, compute its hash, send it to the parent
-                if node == 'a':
+                if node == '':
                     self.root_hash = node_hash
                     self.root_value = node_value
                     break
@@ -263,7 +246,7 @@ class Storage(object):
                 letter = node[len(parent)]
                 assert letter in d.keys()
 
-                if i!=21 and node_hash is None:
+                if i!=20 and node_hash is None:
                     d2 = self.get_node(node)
                     try:
                         node_hash, node_value = self.get_node_hash(node, d2, parent)
@@ -277,7 +260,7 @@ class Storage(object):
                 nodes[parent] = d
 
                 # iterate
-                grandparent = self.parents[parent] if parent != 'a' else None
+                grandparent = self.parents[parent] if parent != '' else None
                 parent_hash, parent_value = self.get_node_hash(parent, d, grandparent)
                 self.hash_list[parent] = (parent_hash, parent_value)
 
@@ -296,7 +279,7 @@ class Storage(object):
     def get_node_hash(self, x, d, parent):
 
         # final hash
-        if x != 'a':
+        if x != '':
             skip_string = x[len(parent)+1:]
         else:
             skip_string = ''
@@ -310,12 +293,10 @@ class Storage(object):
 
 
     def get_path(self, target):
-        assert target[0] == 'a'
-
-        word = target[1:]
-        key = 'a'
-        path = [ 'a' ]
-        i = self.db_addr.iterator(start='a', stop='b')
+        word = target
+        key = ''
+        path = [ '' ]
+        i = self.db_addr.iterator(start='')
 
         while key != target:
 
@@ -368,7 +349,7 @@ class Storage(object):
             _hash, value = v
             self.db_addr.delete(parent)
             if parent in self.hash_list: 
-                print "zz"
+                #print "zz"
                 self.hash_list.pop(parent)
 
             # we need the exact length for the iteration
@@ -380,7 +361,7 @@ class Storage(object):
 
         else:
             self.put_node(parent, items)
-            #grandparent = path[-2] if parent !='a' else None  # is grandparent stable?
+            #grandparent = path[-2] if parent !='' else None  # is grandparent stable?
             #_hash, value = self.get_node_hash(parent, items, grandparent)
             _hash, value = None, 'zz'
             # do not propagate hash if it has been deprecated by a child
@@ -448,10 +429,10 @@ class Storage(object):
 
     def print_all(self):
         i = self.db_addr.iterator()
-        for k,v in i:
-            if k and k[0] == 'a':
-                addr = k[1:].encode('hex')
-                if len(addr)<21:
+        for k, v in i:
+            if k:
+                addr = k.encode('hex')
+                if len(addr)<20:
                     items = ast.literal_eval(v)
                     print addr, "->", items
                 else:
@@ -469,7 +450,7 @@ class Storage(object):
 
         addr = self.address_to_key(addr)
 
-        node = self.db_addr_get(addr)
+        node = self.db_addr.get(addr)
         if node:
             serialized_hist = node
         else: 
@@ -502,7 +483,7 @@ class Storage(object):
     def revert_add_to_history(self, addr, tx_hash, tx_pos, value, tx_height):
         addr = self.address_to_key(addr)
 
-        serialized_hist = self.db_addr_get(addr)
+        serialized_hist = self.db_addr.get(addr)
 
         s = self.serialize_item(tx_hash, tx_pos, value, tx_height)
         if serialized_hist.find(s) == -1: raise
@@ -536,7 +517,7 @@ class Storage(object):
 
         if not itemlist: return
 
-        node = self.db_addr_get(addr)
+        node = self.db_addr.get(addr)
         if node:
             serialized_hist = node
         else:
@@ -573,7 +554,7 @@ class Storage(object):
         addr = self.address_to_key(addr)
         if undo.get(addr) is None: undo[addr] = []
 
-        utx_hist = self.db_addr_get(addr)
+        utx_hist = self.db_addr.get(addr)
 
         l = len(utx_hist)/48
         for i in range(l):

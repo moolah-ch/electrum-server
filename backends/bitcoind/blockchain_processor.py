@@ -92,7 +92,7 @@ class BlockchainProcessor(Processor):
 
 
     def mtime(self, name):
-        now = time.clock()
+        now = time.time()
         if name != '':
             delta = now - self.now
             t = self.mtimes.get(name, 0)
@@ -376,7 +376,6 @@ class BlockchainProcessor(Processor):
 
     def import_block(self, block, block_hash, block_height, sync, revert=False):
 
-        self.mtime('')
         touched_addr = set([])
 
         # deserialize transactions
@@ -400,8 +399,6 @@ class BlockchainProcessor(Processor):
         if revert: 
             assert undo_info == {}
 
-        self.mtime('process')
-            
         # add undo info
         if not revert:
             self.storage.write_undo_info(block_height, self.bitcoind_height, undo_info)
@@ -587,9 +584,11 @@ class BlockchainProcessor(Processor):
         return block
 
     def catch_up(self, sync=True):
-        t1 = time.time()
 
         while not self.shared.stopped():
+
+            self.mtime('')
+
             # are we done yet?
             info = self.bitcoind('getinfo')
             self.bitcoind_height = info.get('blocks')
@@ -602,6 +601,7 @@ class BlockchainProcessor(Processor):
             self.up_to_date = False
             next_block_hash = self.bitcoind('getblockhash', [self.storage.height + 1])
             next_block = self.getfullblock(next_block_hash)
+            self.mtime('daemon')
 
             # fixme: this is unsafe, if we revert when the undo info is not yet written
             revert = (random.randint(1, 100) == 1) if self.test_reorgs else False
@@ -612,12 +612,14 @@ class BlockchainProcessor(Processor):
                 self.storage.height = self.storage.height + 1
                 self.write_header(self.block2header(next_block), sync)
                 self.storage.last_hash = next_block_hash
-
+                self.mtime('import')
+            
                 if self.storage.height % 100 == 0 and not sync:
-                    t2 = time.time()
-                    print_log("catch_up: block %d (%.3fs)" % (self.storage.height, t2 - t1), self.storage.get_root_hash().encode('hex'))
-                    self.print_mtime()
-                    t1 = t2
+                    t_daemon = self.mtimes.get('daemon')
+                    t_import = self.mtimes.get('import')
+                    print_log("catch_up: block %d (%.3fs %.3fs)" % (self.storage.height, t_daemon, t_import), self.storage.get_root_hash().encode('hex'))
+                    self.mtimes['daemon'] = 0
+                    self.mtimes['import'] = 0
 
             else:
                 # revert current block
