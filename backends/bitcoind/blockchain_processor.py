@@ -404,7 +404,7 @@ class BlockchainProcessor(Processor):
             self.storage.write_undo_info(block_height, self.bitcoind_height, undo_info)
 
         # add the max
-        self.storage.db.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
+        self.storage.db_undo.put('height', repr( (block_hash, block_height, self.storage.db_version) ))
 
         for addr in touched_addr:
             self.invalidate_cache(addr)
@@ -614,7 +614,7 @@ class BlockchainProcessor(Processor):
                 self.storage.last_hash = next_block_hash
                 self.mtime('import')
             
-                if self.storage.height % 100 == 0 and not sync:
+                if self.storage.height % 1000 == 0 and not sync:
                     t_daemon = self.mtimes.get('daemon')
                     t_import = self.mtimes.get('import')
                     print_log("catch_up: block %d (%.3fs %.3fs)" % (self.storage.height, t_daemon, t_import), self.storage.get_root_hash().encode('hex'))

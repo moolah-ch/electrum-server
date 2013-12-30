@@ -29,14 +29,15 @@ class Storage(object):
         self.test_reorgs = test_reorgs
         try:
             self.db_addr = plyvel.DB(os.path.join(self.dbpath,'addr'), create_if_missing=True, compression=None)
-            self.db = plyvel.DB(os.path.join(self.dbpath,'utxo'), create_if_missing=True, compression=None)
+            self.db      = plyvel.DB(os.path.join(self.dbpath,'utxo'), create_if_missing=True, compression=None)
+            self.db_undo = plyvel.DB(os.path.join(self.dbpath,'undo'), create_if_missing=True, compression=None)
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
 
         self.db_version = 2 # increase this when database needs to be updated
         try:
-            self.last_hash, self.height, db_version = ast.literal_eval(self.db.get('height'))
+            self.last_hash, self.height, db_version = ast.literal_eval(self.db_undo.get('height'))
             print_log("Database version", self.db_version)
             print_log("Blockchain height", self.height)
         except:
@@ -79,20 +80,19 @@ class Storage(object):
 
 
     def get_address(self, txi):
-        txi = 'b' + txi
         addr = self.db.get(txi)
         return self.key_to_address(addr) if addr else None
 
 
     def get_undo_info(self, height):
-        s = self.db.get("undo%d" % (height % 100))
+        s = self.db_undo.get("undo_info_%d" % (height % 100))
         if s is None: print_log("no undo info for ", height)
         return eval(s)
 
 
     def write_undo_info(self, height, bitcoind_height, undo_info):
         if height > bitcoind_height - 100 or self.test_reorgs:
-            self.db.put("undo%d" % (height % 100), repr(undo_info))
+            self.db_undo.put("undo_info_%d" % (height % 100), repr(undo_info))
 
 
     def common_prefix(self, word1, word2):
@@ -442,6 +442,7 @@ class Storage(object):
     def close(self):
         self.db_addr.close()
         self.db.close()
+        self.db_undo.close()
 
 
     def add_to_history(self, addr, tx_hash, tx_pos, value, tx_height):
@@ -475,7 +476,7 @@ class Storage(object):
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.db.put('b'+txo, addr)
+        self.db.put(txo, addr)
 
 
 
@@ -498,7 +499,7 @@ class Storage(object):
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.db.delete('b'+txo)
+        self.db.delete(txo)
 
 
 
@@ -507,7 +508,7 @@ class Storage(object):
         addr = self.address_to_key(addr)
 
         # restore backlink
-        self.db.put('b' + txi, addr)
+        self.db.put(txi, addr)
 
         # restore removed items
         if undo.get(addr) is not None: 
@@ -575,7 +576,7 @@ class Storage(object):
             self.delete_address(addr)
 
         # delete backlink txi-> addr
-        self.db.delete('b'+txi)
+        self.db.delete(txi)
 
 
 
