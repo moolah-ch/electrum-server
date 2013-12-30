@@ -1,4 +1,4 @@
-import plyvel, ast, hashlib, traceback
+import plyvel, ast, hashlib, traceback, os
 from processor import print_log
 from utils import *
 
@@ -19,6 +19,8 @@ class Storage(object):
         # address: 20 bytes + 1 (we don't need to add that byte)
 
         self.dbpath = config.get('leveldb', 'path_newtree')
+        if not os.path.exists(self.dbpath):
+            os.mkdir(self.dbpath)
         self.pruning_limit = config.getint('leveldb', 'pruning_limit')
         self.shared = shared
         self.hash_list = {}
@@ -26,7 +28,8 @@ class Storage(object):
 
         self.test_reorgs = test_reorgs
         try:
-            self.db = plyvel.DB(self.dbpath, create_if_missing=True, paranoid_checks=True, compression=None)
+            self.db_addr = plyvel.DB(os.path.join(self.dbpath,'addr'), create_if_missing=True, compression=None)
+            self.db = plyvel.DB(os.path.join(self.dbpath,'utxo'), create_if_missing=True, compression=None)
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
@@ -61,9 +64,10 @@ class Storage(object):
         return hash_160_to_bc_address(addr[1:])
 
 
-    def db_get(self, key):
+
+    def db_addr_get(self, key):
         try:
-            return self.db.get(key)
+            return self.db_addr.get(key)
         except:
             print_log("db get error", key)
             traceback.print_exc(file=sys.stdout)
@@ -73,8 +77,7 @@ class Storage(object):
 
     def get_history(self, addr):
         addr = self.address_to_key(addr)
-
-        x = self.db_get(addr)
+        x = self.db_addr_get(addr)
         if x is None: 
             return ''
         try:
@@ -85,16 +88,12 @@ class Storage(object):
             self.shared.stop()
             raise
 
+
     def get_address(self, txi):
         txi = 'b' + txi
-        addr = self.db_get(txi)
+        addr = self.db.get(txi)
         return self.key_to_address(addr) if addr else None
 
-    def put(self, key, value):
-        self.db.put(key, value)
-
-    def delete(self, key):
-        self.db.delete(key)
 
     def get_undo_info(self, height):
         s = self.db.get("undo%d" % (height % 100))
@@ -143,12 +142,12 @@ class Storage(object):
         if batch:
             batch.put(key, out)
         else:
-            self.put(key, out) 
+            self.db_addr.put(key, out) 
 
 
     def get_node(self, key):
 
-        s = self.db_get(key)
+        s = self.db_addr_get(key)
         if s is None: return 
         k = int(s[0:32].encode('hex'), 16)
         s = s[32:]
@@ -171,7 +170,7 @@ class Storage(object):
         word = target[1:]
         key = 'a'
         path = [ 'a' ]
-        i = self.db.iterator()
+        i = self.db_addr.iterator()
 
         while key != target:
 
@@ -218,7 +217,7 @@ class Storage(object):
                 break
 
         # write 
-        self.put(target, serialized_hist)
+        self.db_addr.put(target, serialized_hist)
 
         # compute hash and value of the final node
         utxo = self.get_unspent(serialized_hist)
@@ -284,7 +283,7 @@ class Storage(object):
 
         
         # batch write modified nodes 
-        batch = self.db.write_batch()
+        batch = self.db_addr.write_batch()
         for k, v in nodes.items():
             self.put_node(k, v, batch)
         batch.write()
@@ -316,7 +315,7 @@ class Storage(object):
         word = target[1:]
         key = 'a'
         path = [ 'a' ]
-        i = self.db.iterator(start='a', stop='b')
+        i = self.db_addr.iterator(start='a', stop='b')
 
         while key != target:
 
@@ -339,7 +338,7 @@ class Storage(object):
                         assert key not in path
                         path.append(key)
                 else:
-                    print_log('not in tree', self.db.get(key+word[0]), new_key.encode('hex'))
+                    print_log('not in tree', self.db_addr.get(key+word[0]), new_key.encode('hex'))
                     return False
             else:
                 assert key in path
@@ -351,10 +350,10 @@ class Storage(object):
     def delete_address(self, addr):
         path = self.get_path(addr)
         if path is False:
-            print_log("addr not in tree", addr.encode('hex'), self.key_to_address(addr), self.db.get(addr))
+            print_log("addr not in tree", addr.encode('hex'), self.key_to_address(addr), self.db_addr.get(addr))
             raise
 
-        self.delete(addr)
+        self.db_addr.delete(addr)
         if addr in self.hash_list:
             self.hash_list.pop(addr)
 
@@ -367,13 +366,13 @@ class Storage(object):
         if len(items) == 1:
             letter, v = items.items()[0]
             _hash, value = v
-            self.delete(parent)
+            self.db_addr.delete(parent)
             if parent in self.hash_list: 
                 print "zz"
                 self.hash_list.pop(parent)
 
             # we need the exact length for the iteration
-            i = self.db.iterator()
+            i = self.db_addr.iterator()
             i.seek(parent+letter)
             k, v = i.next()
             # note: k is not necessarily a leaf
@@ -392,7 +391,7 @@ class Storage(object):
 
 
     def get_children(self, x):
-        i = self.db.iterator()
+        i = self.db_addr.iterator()
         l = 0
         while l <256:
             i.seek(x+chr(l))
@@ -428,7 +427,7 @@ class Storage(object):
 
     def get_parent(self, x):
         """ return parent and skip string"""
-        i = self.db.iterator()
+        i = self.db_addr.iterator()
         for j in range(len(x)):
             p = x[0:-j-1]
             i.seek(p)
@@ -448,7 +447,7 @@ class Storage(object):
 
 
     def print_all(self):
-        i = self.db.iterator()
+        i = self.db_addr.iterator()
         for k,v in i:
             if k and k[0] == 'a':
                 addr = k[1:].encode('hex')
@@ -460,6 +459,7 @@ class Storage(object):
         print " ---------- "
 
     def close(self):
+        self.db_addr.close()
         self.db.close()
 
 
@@ -469,7 +469,7 @@ class Storage(object):
 
         addr = self.address_to_key(addr)
 
-        node = self.db_get(addr)
+        node = self.db_addr_get(addr)
         if node:
             serialized_hist = node
         else: 
@@ -494,7 +494,7 @@ class Storage(object):
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.put('b'+txo, addr)
+        self.db.put('b'+txo, addr)
 
 
 
@@ -502,7 +502,7 @@ class Storage(object):
     def revert_add_to_history(self, addr, tx_hash, tx_pos, value, tx_height):
         addr = self.address_to_key(addr)
 
-        serialized_hist = self.db_get(addr)
+        serialized_hist = self.db_addr_get(addr)
 
         s = self.serialize_item(tx_hash, tx_pos, value, tx_height)
         if serialized_hist.find(s) == -1: raise
@@ -517,7 +517,7 @@ class Storage(object):
 
         # backlink
         txo = (tx_hash + int_to_hex(tx_pos, 4)).decode('hex')
-        self.delete('b'+txo)
+        self.db.delete('b'+txo)
 
 
 
@@ -526,7 +526,7 @@ class Storage(object):
         addr = self.address_to_key(addr)
 
         # restore backlink
-        self.put('b' + txi, addr)
+        self.db.put('b' + txi, addr)
 
         # restore removed items
         if undo.get(addr) is not None: 
@@ -536,7 +536,7 @@ class Storage(object):
 
         if not itemlist: return
 
-        node = self.db_get(addr)
+        node = self.db_addr_get(addr)
         if node:
             serialized_hist = node
         else:
@@ -573,7 +573,7 @@ class Storage(object):
         addr = self.address_to_key(addr)
         if undo.get(addr) is None: undo[addr] = []
 
-        utx_hist = self.db_get(addr)
+        utx_hist = self.db_addr_get(addr)
 
         l = len(utx_hist)/48
         for i in range(l):
@@ -594,7 +594,7 @@ class Storage(object):
             self.delete_address(addr)
 
         # delete backlink txi-> addr
-        self.delete('b'+txi)
+        self.db.delete('b'+txi)
 
 
 
