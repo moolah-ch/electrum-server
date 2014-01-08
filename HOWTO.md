@@ -1,18 +1,18 @@
-How to run your own Electrum server
+How to run your own Shuttle server
 ===================================
 
 Abstract
 --------
 
 This document is an easy to follow guide to installing and running your own
-Electrum server on Linux. It is structured as a series of steps you need to
+Shuttle server on Linux. It is structured as a series of steps you need to
 follow, ordered in the most logical way. The next two sections describe some
 conventions we use in this document and hardware, software and expertise
 requirements.
 
 The most up-to date version of this document is available at:
 
-    https://github.com/spesmilo/electrum-server/blob/master/HOWTO.md
+    https://github.com/spesmilo/Shuttle-server/blob/master/HOWTO.md
 
 Conventions
 -----------
@@ -60,17 +60,17 @@ to run bitcoind and keep a copy of the full blockchain, which is roughly
 bitcoind to 8 concurrent connections. If you have more ressources to 
 spare you can run the server with a higher limit of historic transactions 
 per address. CPU speed is also important, mostly for the initial block 
-chain import, but also if you plan to run a public Electrum server, which 
+chain import, but also if you plan to run a public Shuttle server, which 
 could serve tens of concurrent requests. Any multi-core x86 CPU ~2009 or
 newer other than Atom should do for good performance.
 
 Instructions
 ------------
 
-### Step 1. Create a user for running bitcoind and Electrum server
+### Step 1. Create a user for running bitcoind and Shuttle server
 
 This step is optional, but for better security and resource separation I
-suggest you create a separate user just for running `bitcoind` and Electrum.
+suggest you create a separate user just for running `bitcoind` and Shuttle.
 We will also use the `~/bin` directory to keep locally installed files
 (others might want to use `/usr/local/bin` instead). We will download source
 code files to the `~/src` directory.
@@ -85,21 +85,21 @@ to your `.bashrc`, `.profile` or `.bash_profile`, then logout and relogin:
 
     PATH="$HOME/bin:$PATH"
 
-### Step 2. Download and install Electrum
+### Step 2. Download and install Shuttle
 
-We will download the latest git snapshot for Electrum and 'install' it in
+We will download the latest git snapshot for Shuttle and 'install' it in
 our ~/bin directory:
 
-    $ mkdir -p ~/src/electrum
-    $ cd ~/src/electrum
+    $ mkdir -p ~/src/Shuttle
+    $ cd ~/src/Shuttle
     $ sudo apt-get install git
-    $ git clone https://github.com/spesmilo/electrum-server.git server
-    $ chmod +x ~/src/electrum/server/server.py
-    $ ln -s ~/src/electrum/server/server.py ~/bin/electrum-server
+    $ git clone https://github.com/spesmilo/Shuttle-server.git server
+    $ chmod +x ~/src/Shuttle/server/server.py
+    $ ln -s ~/src/Shuttle/server/server.py ~/bin/Shuttle-server
 
 ### Step 3. Download bitcoind
 
-Older versions of Electrum used to require a patched version of bitcoind. 
+Older versions of Shuttle used to require a patched version of bitcoind. 
 This is not the case anymore since bitcoind supports the 'txindex' option.
 We currently recommend bitcoind 0.8.6 stable.
 
@@ -116,7 +116,7 @@ here are some pointers for Ubuntu:
 
 ### Step 4. Configure and start bitcoind
 
-In order to allow Electrum to "talk" to `bitcoind`, we need to set up a RPC
+In order to allow Shuttle to "talk" to `bitcoind`, we need to set up a RPC
 username and password for `bitcoind`. We will then start `bitcoind` and
 wait for it to complete downloading the blockchain.
 
@@ -149,11 +149,11 @@ You should also set up your system to automatically start bitcoind at boot
 time, running as the 'bitcoin' user. Check your system documentation to
 find out the best way to do this.
 
-### Step 5. Install Electrum dependencies
+### Step 5. Install Shuttle dependencies
 
-Electrum server depends on various standard Python libraries. These will be
+Shuttle server depends on various standard Python libraries. These will be
 already installed on your distribution, or can be installed with your
-package manager. Electrum also depends on two Python libraries which we will
+package manager. Shuttle also depends on two Python libraries which we will
 need to install "by hand": `JSONRPClib`.
 
     $ sudo apt-get install python-setuptools
@@ -169,19 +169,19 @@ doesn't have the python-leveldb package.
 
 ### Step 7. Select your limit
 
-Electrum server uses leveldb to store transactions. You can choose
+Shuttle server uses leveldb to store transactions. You can choose
 how many spent transactions per address you want to store on the server.
 The default is 100, but there are also servers with 1000 or even 10000.
 Few addresses have more than 10000 transactions. A limit this high
 can be considered to be equivalent to a "full" server. Full servers previously
-used abe to store the blockchain. The use of abe for electrum servers is now
+used abe to store the blockchain. The use of abe for Shuttle servers is now
 deprecated.
 
 The pruning server uses leveldb and keeps a smaller and
 faster database by pruning spent transactions. It's a lot quicker to get up
 and running and requires less maintenance and diskspace than abe.
 
-The section in the electrum server configuration file (see step 10) looks like this:
+The section in the Shuttle server configuration file (see step 10) looks like this:
 
      [leveldb]
      path = /path/to/your/database
@@ -192,9 +192,9 @@ The section in the electrum server configuration file (see step 10) looks like t
 
 It's recommended to fetch a pre-processed leveldb from the net
 
-You can fetch recent copies of electrum leveldb databases and further instructions 
-from the Electrum full archival server foundry at:
-http://foundry.electrum.org/ 
+You can fetch recent copies of Shuttle leveldb databases and further instructions 
+from the Shuttle full archival server foundry at:
+http://foundry.Shuttle.org/ 
 
 Alternatively if you have the time and nerve you can import the blockchain yourself.
 
@@ -234,7 +234,7 @@ When asked for a challenge password just leave it empty and press enter.
     ...
     Country Name (2 letter code) [AU]:US
     State or Province Name (full name) [Some-State]:California
-    Common Name (eg, YOUR name) []: electrum-server.tld
+    Common Name (eg, YOUR name) []: Shuttle-server.tld
     ...
     A challenge password []:
     ...
@@ -242,9 +242,9 @@ When asked for a challenge password just leave it empty and press enter.
     $ openssl x509 -req -days 730 -in server.csr -signkey server.key -out server.crt
 
 The server.crt file is your certificate suitable for the ssl_certfile= parameter and
-server.key corresponds to ssl_keyfile= in your electrum server config
+server.key corresponds to ssl_keyfile= in your Shuttle server config
 
-Starting with Electrum 1.9 the client will learn and locally cache the SSL certificate 
+Starting with Shuttle 1.9 the client will learn and locally cache the SSL certificate 
 for your server upon the first request to prevent man-in-the middle attacks for all
 further connections.
 
@@ -253,28 +253,28 @@ your server with a different server name along with a new certificate for this s
 Therefore it's a good idea to make an offline backup copy of your certificate and key
 in case you need to restore it.
 
-### Step 10. Configure Electrum server
+### Step 10. Configure Shuttle server
 
-Electrum reads a config file (/etc/electrum.conf) when starting up. This
+Shuttle reads a config file (/etc/Shuttle.conf) when starting up. This
 file includes the database setup, bitcoind RPC setup, and a few other
 options.
 
-    $ sudo cp ~/src/electrum/server/electrum.conf.sample /etc/electrum.conf
-    $ sudo $EDITOR /etc/electrum.conf
+    $ sudo cp ~/src/Shuttle/server/Shuttle.conf.sample /etc/Shuttle.conf
+    $ sudo $EDITOR /etc/Shuttle.conf
 
 Go through the sample config options and set them to your liking.
 If you intend to run the server publicly have a look at README-IRC.md 
 
-### Step 11. Tweak your system for running electrum
+### Step 11. Tweak your system for running Shuttle
 
-Electrum server currently needs quite a few file handles to use leveldb. It also requires
+Shuttle server currently needs quite a few file handles to use leveldb. It also requires
 file handles for each connection made to the server. It's good practice to increase the
 open files limit to 16k. This is most easily achived by sticking the value in .bashrc of the
 root user who usually passes this value to all unprivileged user sessions too.
 
     $ sudo sed -i '$a ulimit -n 16384' /root/.bashrc
 
-We're aware the leveldb part in electrum server may leak some memory and it's good practice to
+We're aware the leveldb part in Shuttle server may leak some memory and it's good practice to
 to either restart the server once in a while from cron (preferred) or to at least monitor 
 it for crashes and then restart the server. Weekly restarts should be fine for most setups.
 If your server gets a lot of traffic and you have a limited amount of RAM you may need to restart
@@ -284,37 +284,37 @@ Two more things for you to consider:
 
 1. To increase security you may want to close bitcoind for incoming connections and connect outbound only
 
-2. Consider restarting bitcoind (together with electrum-server) on a weekly basis to clear out unconfirmed
+2. Consider restarting bitcoind (together with Shuttle-server) on a weekly basis to clear out unconfirmed
    transactions from the local the memory pool which did not propagate over the network
 
-### Step 12. (Finally!) Run Electrum server
+### Step 12. (Finally!) Run Shuttle server
 
-The magic moment has come: you can now start your Electrum server:
+The magic moment has come: you can now start your Shuttle server:
 
-    $ electrum-server
+    $ Shuttle-server
 
 You should see this on the screen:
 
-    starting Electrum server
+    starting Shuttle server
     cache: yes
 
-If you want to stop Electrum server, open another shell and run:
+If you want to stop Shuttle server, open another shell and run:
 
-    $ electrum-server stop
+    $ Shuttle-server stop
 
 You should also take a look at the 'start' and 'stop' scripts in
-`~/src/electrum/server`. You can use them as a starting point to create a
+`~/src/Shuttle/server`. You can use them as a starting point to create a
 init script for your system.
 
-### Step 13. Test the Electrum server
+### Step 13. Test the Shuttle server
 
-We will assume you have a working Electrum client, a wallet and some
+We will assume you have a working Shuttle client, a wallet and some
 transactions history. You should start the client and click on the green
 checkmark (last button on the right of the status bar) to open the Server
 selection window. If your server is public, you should see it in the list
 and you can select it. If you server is private, you need to enter its IP
 or hostname and the port. Press Ok, the client will disconnect from the
-current server and connect to your new Electrum server. You should see your
+current server and connect to your new Shuttle server. You should see your
 addresses and transactions history. You can see the number of blocks and
 response time in the Server selection window. You should send/receive some
 bitcoins to confirm that everything is working properly.
@@ -322,11 +322,11 @@ bitcoins to confirm that everything is working properly.
 ### Step 14. Join us on IRC, subscribe to the server thread
 
 Say hi to the dev crew, other server operators and fans on 
-irc.freenode.net #electrum and we'll try to congratulate you
-on supporting the community by running an Electrum node
+irc.freenode.net #Shuttle and we'll try to congratulate you
+on supporting the community by running an Shuttle node
 
-If you're operating a public Electrum server please subscribe
+If you're operating a public Shuttle server please subscribe
 to or regulary check the following thread:
 https://bitcointalk.org/index.php?topic=85475.0
-It'll contain announcements about important updates to Electrum
+It'll contain announcements about important updates to Shuttle
 server required for a smooth user experience.

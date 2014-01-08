@@ -43,7 +43,7 @@ def create_config():
     config = ConfigParser.ConfigParser()
     # set some defaults, which will be overwritten by the config file
     config.add_section('server')
-    config.set('server', 'banner', 'Welcome to Electrum!')
+    config.set('server', 'banner', 'Welcome to Shuttle!')
     config.set('server', 'host', 'localhost')
     config.set('server', 'report_host', '')
     config.set('server', 'stratum_tcp_port', '50001')
@@ -61,19 +61,17 @@ def create_config():
     config.set('server', 'irc_nick', '')
     config.set('server', 'coin', '')
     config.set('server', 'datadir', '')
-
-    # use leveldb as default
     config.set('server', 'backend', 'leveldb')
     config.add_section('leveldb')
-    config.set('leveldb', 'path', '/dev/shm/electrum_db')
-    config.set('leveldb', 'pruning_limit', '100')
+    config.set('leveldb', 'path', '/opt/dogecoin/shuttle_db')
+    config.set('leveldb', 'pruning_limit', '10000')
 
     for path in ('/etc/', ''):
-        filename = path + 'electrum.conf'
+        filename = path + 'shuttle.conf'
         attempt_read_config(config, filename)
 
     try:
-        with open('/etc/electrum.banner', 'r') as f:
+        with open('/etc/shuttle.banner', 'r') as f:
             config.set('server', 'banner', f.read())
     except IOError:
         pass
@@ -142,17 +140,15 @@ if __name__ == '__main__':
     from backends.irc import ServerProcessor
 
     backend_name = config.get('server', 'backend')
-    if backend_name == 'libbitcoin':
-        from backends.libbitcoin import BlockchainProcessor
-    elif backend_name == 'leveldb':
-        from backends.bitcoind import BlockchainProcessor
+    if backend_name == 'leveldb':
+        from backends.dogecoind import BlockchainProcessor
     else:
         print "Unknown backend '%s' specified\n" % backend_name
         sys.exit(1)
 
     for i in xrange(5):
         print ""
-    print_log("Starting Electrum server on", host)
+    print_log("Starting Shuttle server on", host)
 
     # Create hub
     dispatcher = Dispatcher(config)
@@ -196,4 +192,4 @@ if __name__ == '__main__':
         except:
             shared.stop()
 
-    print_log("Electrum Server stopped")
+    print_log("Shuttle Server stopped")

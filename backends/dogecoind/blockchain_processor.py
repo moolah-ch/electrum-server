@@ -10,7 +10,7 @@ import threading
 import traceback
 import urllib
 
-from backends.bitcoind import deserialize
+from backends.dogecoind import deserialize
 from processor import Processor, print_log
 from utils import *
 
@@ -65,18 +65,18 @@ class BlockchainProcessor(Processor):
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
 
-        self.bitcoind_url = 'http://%s:%s@%s:%s/' % (
-            config.get('bitcoind', 'user'),
-            config.get('bitcoind', 'password'),
-            config.get('bitcoind', 'host'),
-            config.get('bitcoind', 'port'))
+        self.dogecoind_url = 'http://%s:%s@%s:%s/' % (
+            config.get('dogecoind', 'user'),
+            config.get('dogecoind', 'password'),
+            config.get('dogecoind', 'host'),
+            config.get('dogecoind', 'port'))
 
         while True:
             try:
-                self.bitcoind('getinfo')
+                self.dogecoind('getinfo')
                 break
             except:
-                print_log('cannot contact bitcoind...')
+                print_log('cannot contact dogecoind...')
                 time.sleep(5)
                 continue
 
@@ -150,10 +150,10 @@ class BlockchainProcessor(Processor):
             self.db.Write(batch, sync=sync)
 
 
-    def bitcoind(self, method, params=[]):
+    def dogecoind(self, method, params=[]):
         postdata = dumps({"method": method, 'params': params, 'id': 'jsonrpc'})
         try:
-            respdata = urllib.urlopen(self.bitcoind_url, postdata).read()
+            respdata = urllib.urlopen(self.dogecoind_url, postdata).read()
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
@@ -203,8 +203,8 @@ class BlockchainProcessor(Processor):
         }
 
     def get_header(self, height):
-        block_hash = self.bitcoind('getblockhash', [height])
-        b = self.bitcoind('getblock', [block_hash])
+        block_hash = self.dogecoind('getblockhash', [height])
+        b = self.dogecoind('getblock', [block_hash])
         return self.block2header(b)
 
     def init_headers(self, db_height):
@@ -297,7 +297,7 @@ class BlockchainProcessor(Processor):
 
     def get_mempool_transaction(self, txid):
         try:
-            raw_tx = self.bitcoind('getrawtransaction', [txid, 0])
+            raw_tx = self.dogecoind('getrawtransaction', [txid, 0])
         except:
             return None
 
@@ -368,8 +368,8 @@ class BlockchainProcessor(Processor):
 
     def get_merkle(self, tx_hash, height):
 
-        block_hash = self.bitcoind('getblockhash', [height])
-        b = self.bitcoind('getblock', [block_hash])
+        block_hash = self.dogecoind('getblockhash', [height])
+        b = self.dogecoind('getblock', [block_hash])
         tx_list = b.get('tx')
         tx_pos = tx_list.index(tx_hash)
 
@@ -529,7 +529,7 @@ class BlockchainProcessor(Processor):
         return eval(s)
 
     def write_undo_info(self, batch, height, undo_info):
-        if self.is_test or height > self.bitcoind_height - 100:
+        if self.is_test or height > self.dogecoind_height - 100:
             self.batch_put(batch, "undo%d" % (height % 100), repr(undo_info))
 
     def import_block(self, block, block_hash, block_height, sync, revert=False):
@@ -824,7 +824,7 @@ class BlockchainProcessor(Processor):
 
         elif method == 'blockchain.transaction.broadcast':
             try:
-                txo = self.bitcoind('sendrawtransaction', params)
+                txo = self.dogecoind('sendrawtransaction', params)
                 print_log("sent tx:", txo)
                 result = txo
             except BaseException, e:
@@ -846,7 +846,7 @@ class BlockchainProcessor(Processor):
         elif method == 'blockchain.transaction.get':
             try:
                 tx_hash = params[0]
-                result = self.bitcoind('getrawtransaction', [tx_hash, 0])
+                result = self.dogecoind('getrawtransaction', [tx_hash, 0])
             except BaseException, e:
                 error = str(e) + ': ' + repr(params)
                 print_log("tx get error:", error)
@@ -864,7 +864,7 @@ class BlockchainProcessor(Processor):
 
 
     def getfullblock(self, block_hash):
-        block = self.bitcoind('getblock', [block_hash])
+        block = self.dogecoind('getblock', [block_hash])
 
         rawtxreq = []
         i = 0
@@ -878,7 +878,7 @@ class BlockchainProcessor(Processor):
 
         postdata = dumps(rawtxreq)
         try:
-            respdata = urllib.urlopen(self.bitcoind_url, postdata).read()
+            respdata = urllib.urlopen(self.dogecoind_url, postdata).read()
         except:
             traceback.print_exc(file=sys.stdout)
             self.shared.stop()
@@ -888,7 +888,7 @@ class BlockchainProcessor(Processor):
         for ir in r:
             if ir['error'] is not None:
                 self.shared.stop()
-                print_log("Error: make sure you run bitcoind with txindex=1; use -reindex if needed.")
+                print_log("Error: make sure you run dogecoind with txindex=1; use -reindex if needed.")
                 raise BaseException(ir['error'])
             rawtxdata.append(ir['result'])
         block['tx'] = rawtxdata
@@ -899,16 +899,16 @@ class BlockchainProcessor(Processor):
 
         while not self.shared.stopped():
             # are we done yet?
-            info = self.bitcoind('getinfo')
-            self.bitcoind_height = info.get('blocks')
-            bitcoind_block_hash = self.bitcoind('getblockhash', [self.bitcoind_height])
-            if self.last_hash == bitcoind_block_hash:
+            info = self.dogecoind('getinfo')
+            self.dogecoind_height = info.get('blocks')
+            dogecoind_block_hash = self.dogecoind('getblockhash', [self.dogecoind_height])
+            if self.last_hash == dogecoind_block_hash:
                 self.up_to_date = True
                 break
 
             # not done..
             self.up_to_date = False
-            next_block_hash = self.bitcoind('getblockhash', [self.height + 1])
+            next_block_hash = self.dogecoind('getblockhash', [self.height + 1])
             next_block = self.getfullblock(next_block_hash)
 
             # fixme: this is unsafe, if we revert when the undo info is not yet written
@@ -940,7 +940,7 @@ class BlockchainProcessor(Processor):
                 self.header = self.read_header(self.height)
                 self.last_hash = self.hash_header(self.header)
 
-        self.header = self.block2header(self.bitcoind('getblock', [self.last_hash]))
+        self.header = self.block2header(self.dogecoind('getblock', [self.last_hash]))
 
         if self.shared.stopped() and self.use_plyvel: 
             print_log( "closing database" )
@@ -948,7 +948,7 @@ class BlockchainProcessor(Processor):
 
 
     def memorypool_update(self):
-        mempool_hashes = set(self.bitcoind('getrawmempool'))
+        mempool_hashes = set(self.dogecoind('getrawmempool'))
         touched_addresses = set([])
 
         for tx_hash in mempool_hashes:
